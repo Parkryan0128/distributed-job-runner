@@ -1,0 +1,6 @@
+.env
+/bin/
+coverage.out
+/test-results/
+/playwright-report/
+/node_modules/
