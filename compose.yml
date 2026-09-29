@@ -1,0 +1,75 @@
+x-runtime: &runtime
+  image: distributed-job-runner:local
+  build: .
+  restart: unless-stopped
+  environment: &environment
+    DATABASE_URL: postgres://runner:runner-local@postgres:5432/runner?sslmode=disable
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+  stop_grace_period: 15s
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: [/tmp]
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: runner
+      POSTGRES_PASSWORD: runner-local
+      POSTGRES_DB: runner
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U runner -d runner]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
+    image: distributed-job-runner:local
+    build: .
+    command: [migrate]
+    environment: *environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *runtime
+    command: [api]
+    environment:
+      <<: *environment
+      API_TOKEN: ${API_TOKEN:-local-runner-token-change-me}
+    ports:
+      - "127.0.0.1:${PORT:-8080}:8080"
+    healthcheck:
+      test: [CMD, runner, healthcheck]
+      interval: 3s
+      timeout: 4s
+      retries: 20
+
+  worker-a:
+    <<: *runtime
+    command: [worker]
+    environment:
+      <<: *environment
+      WORKER_ID: worker-a
+      CONCURRENCY: 2
+      LEASE_SECONDS: 6
+
+  worker-b:
+    <<: *runtime
+    command: [worker]
+    environment:
+      <<: *environment
+      WORKER_ID: worker-b
+      CONCURRENCY: 2
+      LEASE_SECONDS: 6
+
+volumes:
+  postgres:

@@ -33,3 +33,29 @@ jobs:
       - run: go vet ./...
       - run: go test -race -count=1 -v ./...
       - run: go build ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - name: Build and start the demo
+        run: docker compose up --build --wait --wait-timeout 120
+      - run: npm run test:acceptance
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - name: Container logs
+        if: always()
+        run: docker compose logs --no-color > compose.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: acceptance-results
+          path: |
+            playwright-report/
+            test-results/
+            compose.log
+          retention-days: 7
+      - name: Stop demo containers
+        if: always()
+        run: docker compose down -v

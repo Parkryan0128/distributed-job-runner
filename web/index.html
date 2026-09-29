@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f5f6f3" />
+    <title>Job Runner</title>
+    <link rel="icon" href="/favicon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Job Runner home"
+        ><span class="brand-mark">↗</span> Job Runner
+        <span class="brand-sub">/ console</span></a
+      >
+      <div class="top-actions">
+        <span id="connection" class="connection">Not connected</span
+        ><button id="disconnect" class="quiet" hidden>Disconnect</button>
+      </div>
+    </header>
+    <section id="login" class="login-card">
+      <p class="eyebrow">DISTRIBUTED JOB RUNNER</p>
+      <h1>A small console.<br />A lot happening behind it.</h1>
+      <p class="muted">
+        Submit work, follow its progress, and see how workers handle failures.
+      </p>
+      <form id="login-form">
+        <label for="token">API token</label>
+        <input
+          id="token"
+          type="password"
+          autocomplete="off"
+          required
+          minlength="16"
+          placeholder="Enter your runner token"
+        />
+        <button class="primary" type="submit">
+          Connect to runner <span>↗</span>
+        </button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+    </section>
+    <main id="console" hidden>
+      <section class="page-heading">
+        <div>
+          <p class="eyebrow">WORKSPACE / DEFAULT</p>
+          <h1>Execution overview</h1>
+          <p class="muted">Every job, every attempt, one place.</p>
+        </div>
+        <button id="new-job" class="primary">+ New job</button>
+      </section>
+      <p id="notice" class="notice" role="status" aria-live="polite"></p>
+      <p id="error" class="error" role="alert"></p>
+      <section class="stats" aria-label="Job counts">
+        <button class="stat" data-status="queued">
+          <span>Queued</span><strong id="count-queued">0</strong
+          ><small>Waiting for a worker</small>
+        </button>
+        <button class="stat" data-status="running">
+          <span><i class="dot"></i> Running</span
+          ><strong id="count-running">0</strong
+          ><small>Currently in progress</small>
+        </button>
+        <button class="stat" data-status="succeeded">
+          <span>Succeeded</span><strong id="count-succeeded">0</strong
+          ><small>Completed successfully</small>
+        </button>
+        <button class="stat" data-status="dead">
+          <span>Dead letter</span><strong id="count-dead">0</strong
+          ><small>No more automatic retries</small>
+        </button>
+        <button class="stat" data-status="canceled">
+          <span>Canceled</span><strong id="count-canceled">0</strong
+          ><small>Stopped by request</small>
+        </button>
+      </section>
+      <section class="workspace">
+        <div class="panel job-panel">
+          <div class="panel-heading">
+            <h2>Jobs</h2>
+            <span class="muted small">Refreshes every 1.5s</span>
+          </div>
+          <div class="filters">
+            <label
+              >Status<select id="status-filter">
+                <option value="">All statuses</option>
+                <option value="queued">Queued</option>
+                <option value="running">Running</option>
+                <option value="succeeded">Succeeded</option>
+                <option value="dead">Dead letter</option>
+                <option value="canceled">Canceled</option>
+              </select></label
+            ><label
+              >Queue<select id="queue-filter">
+                <option value="">All queues</option>
+                <option value="default">default</option>
+                <option value="reports">reports</option>
+              </select></label
+            >
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job / kind</th>
+                  <th>Status</th>
+                  <th>Queue</th>
+                  <th>Attempt</th>
+                  <th>Created</th>
+                </tr>
+              </thead>
+              <tbody id="jobs"></tbody>
+            </table>
+          </div>
+          <div id="empty" class="empty" hidden>
+            <span class="empty-icon">↗</span>
+            <h3>No jobs here yet</h3>
+            <p>Submit a job or change the filters.</p>
+          </div>
+          <div class="table-footer">
+            <span id="job-count" class="muted small">0 jobs</span>
+            <div>
+              <button id="newest" class="quiet" disabled>Newest</button
+              ><button id="older" class="quiet" disabled>Older →</button>
+            </div>
+          </div>
+        </div>
+        <aside class="panel detail-panel" aria-label="Job details">
+          <div class="panel-heading">
+            <h2>Job details</h2>
+            <span id="detail-status"></span>
+          </div>
+          <div id="detail-empty" class="empty">
+            <span class="empty-icon">⌁</span>
+            <h3>Follow an execution</h3>
+            <p>
+              Select a job to inspect its payload, result, and attempt history.
+            </p>
+          </div>
+          <div id="detail" hidden>
+            <div class="detail-summary">
+              <p id="detail-kind" class="eyebrow"></p>
+              <code id="detail-id" data-testid="job-id"></code>
+              <dl>
+                <div>
+                  <dt>Queue</dt>
+                  <dd id="detail-queue"></dd>
+                </div>
+                <div>
+                  <dt>Attempts</dt>
+                  <dd id="detail-attempts"></dd>
+                </div>
+                <div>
+                  <dt>Worker</dt>
+                  <dd id="detail-worker"></dd>
+                </div>
+                <div>
+                  <dt>Available</dt>
+                  <dd id="detail-available"></dd>
+                </div>
+              </dl>
+              <button id="cancel-job" class="danger">Cancel job</button>
+            </div>
+            <div class="detail-section">
+              <h3>Attempt history</h3>
+              <ol id="attempts" class="attempts"></ol>
+              <p id="no-attempts" class="muted small">
+                No worker has claimed this job.
+              </p>
+            </div>
+            <div class="detail-section">
+              <h3>Payload</h3>
+              <pre id="payload"></pre>
+            </div>
+            <div id="result-section" class="detail-section" hidden>
+              <h3>Result</h3>
+              <pre id="result"></pre>
+            </div>
+            <div id="failure-section" class="detail-section" hidden>
+              <h3>Last error</h3>
+              <pre id="failure" class="error"></pre>
+            </div>
+          </div>
+        </aside>
+      </section>
+      <footer>
+        Go + PostgreSQL
+        <span>Independent workers · Durable jobs · Leased execution</span>
+      </footer>
+    </main>
+    <dialog id="composer">
+      <form id="job-form">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">ADD TO QUEUE</p>
+            <h2>New job</h2>
+          </div>
+          <button
+            id="close-composer"
+            type="button"
+            class="quiet"
+            aria-label="Close new job"
+          >
+            ✕
+          </button>
+        </div>
+        <p class="muted">Choose a task or try a failure scenario.</p>
+        <div class="presets">
+          <button type="button" data-preset="success">Quick success</button
+          ><button type="button" data-preset="retry">Retry twice</button
+          ><button type="button" data-preset="dead">Exhaust retries</button
+          ><button type="button" data-preset="long">Long job</button>
+        </div>
+        <div class="form-grid">
+          <label
+            >Task<select id="kind" name="kind">
+              <option value="demo">Demo task</option>
+              <option value="checksum">SHA-256 checksum</option>
+              <option value="statistics">Statistics</option>
+            </select></label
+          ><label
+            >Queue<select id="queue" name="queue">
+              <option value="default">default</option>
+              <option value="reports">reports</option>
+            </select></label
+          >
+        </div>
+        <label for="job-payload">Payload</label
+        ><textarea
+          id="job-payload"
+          name="payload"
+          rows="5"
+          spellcheck="false"
+          required
+        >
+{"work_ms": 1500, "fail_until": 0}</textarea
+        >
+        <div class="form-grid options">
+          <label
+            >Priority<input
+              name="priority"
+              type="number"
+              min="0"
+              max="9"
+              value="0"
+              required /></label
+          ><label
+            >Max attempts<input
+              name="max_attempts"
+              type="number"
+              min="1"
+              max="10"
+              value="3"
+              required /></label
+          ><label
+            >Timeout (s)<input
+              name="timeout_seconds"
+              type="number"
+              min="1"
+              max="300"
+              value="30"
+              required /></label
+          ><label
+            >Delay (s)<input
+              name="delay_seconds"
+              type="number"
+              min="0"
+              max="86400"
+              value="0"
+              required
+          /></label>
+        </div>
+        <p id="submit-error" class="error" role="alert"></p>
+        <div class="dialog-footer">
+          <span class="muted small">Priority 9 runs before priority 0.</span
+          ><button id="submit-job" class="primary" type="submit">
+            Submit job ↗
+          </button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>
