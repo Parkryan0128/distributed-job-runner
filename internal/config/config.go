@@ -24,7 +24,14 @@ type Config struct {
 }
 
 func Load(mode string) (Config, error) {
-	c := Config{DatabaseURL: os.Getenv("DATABASE_URL"), Token: os.Getenv("API_TOKEN"), Address: env("LISTEN_ADDR", ":8080"), WebDir: env("WEB_DIR", "web"), WorkerID: env("WORKER_ID", queue.NewID()), Queues: strings.Split(env("QUEUES", "default,reports"), ",")}
+	c := Config{
+		DatabaseURL: os.Getenv("DATABASE_URL"),
+		Token:       os.Getenv("API_TOKEN"),
+		Address:     env("LISTEN_ADDR", ":8080"),
+		WebDir:      env("WEB_DIR", "web"),
+		WorkerID:    env("WORKER_ID", queue.NewID()),
+		Queues:      strings.Split(env("QUEUES", "default,reports"), ","),
+	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL is required")
 	}

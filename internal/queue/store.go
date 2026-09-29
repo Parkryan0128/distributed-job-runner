@@ -36,11 +36,12 @@ func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 const columns = `id::text, kind, queue, payload, priority, status, attempt, max_attempts,
  timeout_seconds, worker_id, lease_until, available_at, created_at, updated_at, result, error`
 
-func scanJob(row pgx.Row) (Job, error) {
+func scanJob(row pgx.Row, extra ...any) (Job, error) {
 	var j Job
-	err := row.Scan(&j.ID, &j.Kind, &j.Queue, &j.Payload, &j.Priority, &j.Status, &j.Attempt,
+	fields := []any{&j.ID, &j.Kind, &j.Queue, &j.Payload, &j.Priority, &j.Status, &j.Attempt,
 		&j.MaxAttempts, &j.TimeoutSeconds, &j.WorkerID, &j.LeaseUntil, &j.AvailableAt,
-		&j.CreatedAt, &j.UpdatedAt, &j.Result, &j.Error)
+		&j.CreatedAt, &j.UpdatedAt, &j.Result, &j.Error}
+	err := row.Scan(append(fields, extra...)...)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return j, ErrNotFound
 	}
@@ -124,17 +125,8 @@ func (s *Store) Get(ctx context.Context, id string) (Detail, error) {
 }
 
 func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
-	if f.Limit < 1 || f.Limit > 100 {
-		return Page{}, errors.New("limit must be between 1 and 100")
-	}
-	if f.Status != "" && !ValidStatus(f.Status) {
-		return Page{}, errors.New("invalid status")
-	}
-	if f.Queue != "" && !ValidQueue(f.Queue) {
-		return Page{}, errors.New("invalid queue")
-	}
-	if f.Before < 0 {
-		return Page{}, errors.New("invalid cursor")
+	if err := f.Validate(); err != nil {
+		return Page{}, err
 	}
 	rows, err := s.pool.Query(ctx, `SELECT `+columns+`,sequence FROM jobs
 	 WHERE ($1='' OR status=$1) AND ($2='' OR queue=$2) AND ($3::bigint=0 OR sequence<$3)
@@ -146,10 +138,9 @@ func (s *Store) List(ctx context.Context, f Filter) (Page, error) {
 	page := Page{Jobs: make([]Job, 0)}
 	var last int64
 	for rows.Next() {
-		var j Job
 		var seq int64
-		if err := rows.Scan(&j.ID, &j.Kind, &j.Queue, &j.Payload, &j.Priority, &j.Status, &j.Attempt,
-			&j.MaxAttempts, &j.TimeoutSeconds, &j.WorkerID, &j.LeaseUntil, &j.AvailableAt, &j.CreatedAt, &j.UpdatedAt, &j.Result, &j.Error, &seq); err != nil {
+		j, err := scanJob(rows, &seq)
+		if err != nil {
 			return Page{}, err
 		}
 		if len(page.Jobs) == f.Limit {
@@ -196,16 +187,34 @@ func (s *Store) Claim(ctx context.Context, worker string, queues []string, lease
 	return j, nil
 }
 
+func lockAttempt(ctx context.Context, tx pgx.Tx, j Job) (int, error) {
+	var maxAttempts int
+	err := tx.QueryRow(ctx, `SELECT max_attempts FROM jobs WHERE id=$1 AND status='running'
+	 AND attempt=$2 AND worker_id=$3 FOR UPDATE`, j.ID, j.Attempt, j.WorkerID).Scan(&maxAttempts)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrLeaseLost
+	}
+	return maxAttempts, err
+}
+
 func (s *Store) Heartbeat(ctx context.Context, j Job, lease time.Duration) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE jobs SET lease_until=clock_timestamp()+make_interval(secs=>$4)
-	 WHERE id=$1 AND status='running' AND attempt=$2 AND worker_id=$3 AND lease_until>clock_timestamp()`, j.ID, j.Attempt, j.WorkerID, lease.Seconds())
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := lockAttempt(ctx, tx, j); err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `UPDATE jobs SET lease_until=clock_timestamp()+make_interval(secs=>$2)
+	 WHERE id=$1 AND lease_until>clock_timestamp()`, j.ID, lease.Seconds())
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeaseLost
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) Finish(ctx context.Context, j Job, result json.RawMessage, failure string, permanent bool) error {
@@ -214,11 +223,7 @@ func (s *Store) Finish(ctx context.Context, j Job, result json.RawMessage, failu
 		return err
 	}
 	defer tx.Rollback(ctx)
-	current, err := scanJob(tx.QueryRow(ctx, `SELECT `+columns+` FROM jobs WHERE id=$1 AND status='running'
-	 AND attempt=$2 AND worker_id=$3 AND lease_until>clock_timestamp() FOR UPDATE`, j.ID, j.Attempt, j.WorkerID))
-	if errors.Is(err, ErrNotFound) {
-		return ErrLeaseLost
-	}
+	maxAttempts, err := lockAttempt(ctx, tx, j)
 	if err != nil {
 		return err
 	}
@@ -226,14 +231,18 @@ func (s *Store) Finish(ctx context.Context, j Job, result json.RawMessage, failu
 	if failure != "" {
 		status, attemptStatus = "queued", "failed"
 		result = nil
-		if permanent || current.Attempt >= current.MaxAttempts {
+		if permanent || j.Attempt >= maxAttempts {
 			status = "dead"
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE jobs SET status=$2,result=$3,error=$4,worker_id=NULL,lease_until=NULL,
-	 available_at=clock_timestamp()+make_interval(secs=>$5),updated_at=clock_timestamp() WHERE id=$1`, j.ID, status, result, failure, RetryDelay(current.Attempt).Seconds())
+	tag, err := tx.Exec(ctx, `UPDATE jobs SET status=$2,result=$3,error=$4,worker_id=NULL,lease_until=NULL,
+	 available_at=CASE WHEN $2='queued' THEN clock_timestamp()+make_interval(secs=>$5) ELSE available_at END,
+	 updated_at=clock_timestamp() WHERE id=$1 AND lease_until>clock_timestamp()`, j.ID, status, result, failure, RetryDelay(j.Attempt).Seconds())
 	if err != nil {
 		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrLeaseLost
 	}
 	_, err = tx.Exec(ctx, `UPDATE attempts SET status=$3,error=$4,finished_at=clock_timestamp() WHERE job_id=$1 AND number=$2`, j.ID, j.Attempt, attemptStatus, failure)
 	if err != nil {
@@ -275,7 +284,8 @@ func (s *Store) Recover(ctx context.Context) (int, error) {
 			status = "dead"
 		}
 		_, err = tx.Exec(ctx, `UPDATE jobs SET status=$2,worker_id=NULL,lease_until=NULL,error='worker lease expired',
-		 available_at=clock_timestamp()+make_interval(secs=>$3),updated_at=clock_timestamp() WHERE id=$1`, j.id, status, RetryDelay(j.attempt).Seconds())
+		 available_at=CASE WHEN $2='queued' THEN clock_timestamp()+make_interval(secs=>$3) ELSE available_at END,
+		 updated_at=clock_timestamp() WHERE id=$1`, j.id, status, RetryDelay(j.attempt).Seconds())
 		if err != nil {
 			return 0, err
 		}

@@ -51,13 +51,14 @@ func (s *Server) Handler(assets fs.FS) (http.Handler, error) {
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "route not found") })
 	if assets != nil {
+		files := http.FileServerFS(assets)
 		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodGet && r.Method != http.MethodHead {
 				w.Header().Set("Allow", "GET, HEAD")
 				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 				return
 			}
-			http.FileServerFS(assets).ServeHTTP(w, r)
+			files.ServeHTTP(w, r)
 		}))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -161,8 +162,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	f := queue.Filter{Status: q.Get("status"), Queue: q.Get("queue"), Limit: 50}
 	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
-		if err != nil || n < 1 || n > 100 {
-			writeError(w, 400, "limit must be 1..100")
+		if err != nil || n < 1 {
+			writeError(w, http.StatusBadRequest, "limit must be 1..100")
 			return
 		}
 		f.Limit = n
@@ -170,17 +171,13 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if raw := q.Get("before"); raw != "" {
 		n, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || n < 1 {
-			writeError(w, 400, "before must be a positive cursor")
+			writeError(w, http.StatusBadRequest, "before must be a positive cursor")
 			return
 		}
 		f.Before = n
 	}
-	if f.Status != "" && !queue.ValidStatus(f.Status) {
-		writeError(w, 400, "invalid status")
-		return
-	}
-	if f.Queue != "" && !queue.ValidQueue(f.Queue) {
-		writeError(w, 400, "invalid queue")
+	if err := f.Validate(); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	page, err := s.Store.List(r.Context(), f)
@@ -188,12 +185,12 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		s.failure(w, err)
 		return
 	}
-	write(w, 200, page)
+	write(w, http.StatusOK, page)
 }
 
 func validID(w http.ResponseWriter, r *http.Request) bool {
 	if !queue.ValidID(r.PathValue("id")) {
-		writeError(w, 400, "invalid job ID")
+		writeError(w, http.StatusBadRequest, "invalid job ID")
 		return false
 	}
 	return true
@@ -207,7 +204,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 		s.failure(w, err)
 		return
 	}
-	write(w, 200, j)
+	write(w, http.StatusOK, j)
 }
 func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 	if !validID(w, r) {
@@ -223,7 +220,7 @@ func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
 		s.failure(w, err)
 		return
 	}
-	write(w, 200, j)
+	write(w, http.StatusOK, j)
 }
 func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Store.Stats(r.Context())
@@ -231,7 +228,7 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		s.failure(w, err)
 		return
 	}
-	write(w, 200, st)
+	write(w, http.StatusOK, st)
 }
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	st, err := s.Store.Stats(r.Context())

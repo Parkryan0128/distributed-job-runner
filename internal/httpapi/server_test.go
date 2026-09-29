@@ -207,3 +207,31 @@ func TestRouteRegistrationAndStaticAssetsWithoutDatabase(t *testing.T) {
 	expect(t, request(h, "GET", "/api/jobs", "", "", false), 401)
 	expect(t, request(h, "POST", "/", "", "", false), 405)
 }
+
+func TestTextPayloadBoundariesAndEscaping(t *testing.T) {
+	_, h := setup(t)
+	for _, value := range []string{strings.Repeat("a", 12000), strings.Repeat("<>&", 3000), strings.Repeat("한", 4000)} {
+		j := submitted(t, h, `{"kind":"checksum","payload":{"text":"`+value+`"}}`)
+		w := request(h, "GET", "/api/jobs/"+j.ID, "", "", true)
+		expect(t, w, 200)
+		var got queue.Detail
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		var payload struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(got.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Text != value {
+			t.Fatal("stored text changed during normalization")
+		}
+	}
+	for _, body := range []string{
+		`{"kind":"checksum","payload":{"text":"` + strings.Repeat("a", 12001) + `"}}`,
+		`{"kind":"checksum","payload":{"text":"\u0000"}}`,
+	} {
+		expect(t, request(h, "POST", "/api/jobs", body, "", true), 400)
+	}
+}

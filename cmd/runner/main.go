@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,16 +33,11 @@ func run() error {
 	}
 	mode := os.Args[1]
 	if mode == "healthcheck" {
-		client := http.Client{Timeout: 3 * time.Second}
-		resp, err := client.Get("http://127.0.0.1:8080/readyz")
-		if err != nil {
-			return err
+		address := os.Getenv("LISTEN_ADDR")
+		if address == "" {
+			address = ":8080"
 		}
-		defer resp.Body.Close()
-		if resp.StatusCode != 200 {
-			return fmt.Errorf("readiness returned %d", resp.StatusCode)
-		}
-		return nil
+		return healthcheck(address)
 	}
 	if mode != "api" && mode != "worker" && mode != "migrate" {
 		return errors.New("unknown command")
@@ -85,7 +81,15 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	server := http.Server{Addr: cfg.Address, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16384}
+	server := http.Server{
+		Addr:              cfg.Address,
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16384,
+	}
 	done := make(chan error, 1)
 	go func() { slog.Info("API started", "address", cfg.Address); done <- server.ListenAndServe() }()
 	select {
@@ -103,4 +107,27 @@ func run() error {
 		}
 		return nil
 	}
+}
+
+func healthcheck(address string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return err
+	}
+	switch host {
+	case "", "0.0.0.0":
+		host = "127.0.0.1"
+	case "::":
+		host = "::1"
+	}
+	client := http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://" + net.JoinHostPort(host, port) + "/readyz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("readiness returned %d", resp.StatusCode)
+	}
+	return nil
 }

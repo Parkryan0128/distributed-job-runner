@@ -141,10 +141,10 @@ func TestConcurrentWorkersClaimEachJobOnce(t *testing.T) {
 }
 
 func TestClaimHonorsQueuePriorityAndSchedule(t *testing.T) {
-	s, _ := testdb.New(t)
+	s, p := testdb.New(t)
 	low := submit(t, s, queue.Submit{Priority: 1})
 	high := submit(t, s, queue.Submit{Priority: 9})
-	submit(t, s, queue.Submit{Priority: 9, DelaySeconds: 3600})
+	delayed := submit(t, s, queue.Submit{Priority: 9, DelaySeconds: 3600})
 	other := submit(t, s, queue.Submit{Queue: "reports", Priority: 9})
 	if j := claim(t, s, "w"); j.ID != high.ID {
 		t.Fatal("highest ready priority was not selected")
@@ -158,6 +158,10 @@ func TestClaimHonorsQueuePriorityAndSchedule(t *testing.T) {
 	if j, err := s.Claim(ctx, "w", []string{"reports"}, time.Second); err != nil || j.ID != other.ID {
 		t.Fatalf("other queue: %v", err)
 	}
+	ready(t, p, delayed.ID)
+	if j := claim(t, s, "w"); j.ID != delayed.ID {
+		t.Fatal("scheduled job was not claimed after becoming due")
+	}
 }
 
 func TestSuccessfulCompletionPersistsResultAndHistory(t *testing.T) {
@@ -170,6 +174,9 @@ func TestSuccessfulCompletionPersistsResultAndHistory(t *testing.T) {
 	got := detail(t, s, j.ID)
 	if got.Status != "succeeded" || got.WorkerID != nil || got.LeaseUntil != nil || len(got.Attempts) != 1 || got.Attempts[0].Status != "succeeded" || got.Attempts[0].FinishedAt == nil {
 		t.Fatalf("bad completion: %+v", got)
+	}
+	if !got.AvailableAt.Equal(j.AvailableAt) {
+		t.Fatal("completed job was given another scheduled execution time")
 	}
 	var result map[string]int
 	if err := json.Unmarshal(got.Result, &result); err != nil || result["answer"] != 42 {
@@ -402,5 +409,137 @@ func TestListUsesStableCursorAndFilters(t *testing.T) {
 	}
 	if _, err := s.Get(ctx, queue.NewID()); !errors.Is(err, queue.ErrNotFound) {
 		t.Fatalf("missing: %v", err)
+	}
+}
+
+func TestLeaseExpiryWhileWaitingForRowLock(t *testing.T) {
+	for _, operation := range []string{"heartbeat", "finish"} {
+		t.Run(operation, func(t *testing.T) {
+			s, p := testdb.New(t)
+			submit(t, s, queue.Submit{})
+			j, err := s.Claim(ctx, "worker", []string{"default"}, 2*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			locked, err := p.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer locked.Rollback(ctx)
+			var pid int
+			if err := locked.QueryRow(ctx, `SELECT pg_backend_pid() FROM jobs WHERE id=$1 FOR UPDATE`, j.ID).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			waiting, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() {
+				if operation == "heartbeat" {
+					result <- s.Heartbeat(waiting, j, time.Minute)
+				} else {
+					result <- s.Finish(waiting, j, json.RawMessage(`{}`), "", false)
+				}
+			}()
+			blocked := false
+			deadline := time.Now().Add(time.Second)
+			for time.Now().Before(deadline) {
+				if err := p.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked); err != nil {
+					t.Fatal(err)
+				}
+				if blocked {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if !blocked {
+				t.Fatal("operation did not wait on the row lock")
+			}
+			execute(t, p, `SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.05) FROM jobs WHERE id=$1`, j.ID)
+			if err := locked.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-result; !errors.Is(err, queue.ErrLeaseLost) {
+				t.Fatalf("accepted expired lease after lock wait: %v", err)
+			}
+			got := detail(t, s, j.ID)
+			if got.Status != "running" || got.Result != nil || !got.LeaseUntil.Equal(*j.LeaseUntil) {
+				t.Fatalf("expired attempt was changed: %+v", got)
+			}
+		})
+	}
+}
+
+func TestConcurrentRecoveryProcessesEachExpiredAttemptOnce(t *testing.T) {
+	s, p := testdb.New(t)
+	ids := make([]string, 0, 105)
+	for range 105 {
+		j := submit(t, s, queue.Submit{})
+		claim(t, s, "crashed")
+		ids = append(ids, j.ID)
+	}
+	execute(t, p, `UPDATE jobs SET lease_until=clock_timestamp()-interval '1 second'`)
+	var recovered atomic.Int32
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			n, err := s.Recover(ctx)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if n > 100 {
+				t.Errorf("recovery exceeded batch limit: %d", n)
+			}
+			recovered.Add(int32(n))
+		})
+	}
+	wg.Wait()
+	if recovered.Load() != 105 {
+		t.Fatalf("recovered %d attempts, expected 105", recovered.Load())
+	}
+	for _, id := range ids {
+		j := detail(t, s, id)
+		if j.Status != "queued" || j.Attempt != 1 || len(j.Attempts) != 1 || j.Attempts[0].Status != "expired" {
+			t.Fatalf("recovery duplicated or lost history: %+v", j)
+		}
+	}
+	if n, err := s.Recover(ctx); err != nil || n != 0 {
+		t.Fatalf("recovered attempts twice: %d %v", n, err)
+	}
+}
+
+func TestStateChangesRollBackWhenAttemptUpdateFails(t *testing.T) {
+	for _, operation := range []string{"finish", "recover", "cancel"} {
+		t.Run(operation, func(t *testing.T) {
+			s, p := testdb.New(t)
+			submit(t, s, queue.Submit{})
+			j := claim(t, s, "worker")
+			if operation == "recover" {
+				execute(t, p, `UPDATE jobs SET lease_until=clock_timestamp()-interval '1 second' WHERE id=$1`, j.ID)
+			}
+			execute(t, p, `ALTER TABLE attempts ADD CONSTRAINT reject_terminal CHECK(status='running')`)
+			apply := func() error {
+				switch operation {
+				case "finish":
+					return s.Finish(ctx, j, json.RawMessage(`{"saved":true}`), "", false)
+				case "cancel":
+					return s.Cancel(ctx, j.ID)
+				default:
+					_, err := s.Recover(ctx)
+					return err
+				}
+			}
+			if err := apply(); err == nil {
+				t.Fatal("expected attempt update failure")
+			}
+			got := detail(t, s, j.ID)
+			if got.Status != "running" || got.WorkerID == nil || got.Result != nil || got.Attempts[0].Status != "running" || got.Attempts[0].FinishedAt != nil {
+				t.Fatalf("partial state transition persisted: %+v", got)
+			}
+			execute(t, p, `ALTER TABLE attempts DROP CONSTRAINT reject_terminal`)
+			if err := apply(); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

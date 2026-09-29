@@ -61,11 +61,16 @@ func (s *Submit) Normalize() error {
 	if len(s.Payload) > 16384 || !json.Valid(s.Payload) || decoder.Decode(&payload) != nil || payload == nil {
 		return errors.New("payload must be a JSON object of at most 16 KiB")
 	}
-	canonical, err := json.Marshal(payload)
-	if err != nil {
+	var canonical bytes.Buffer
+	encoder := json.NewEncoder(&canonical)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(payload); err != nil {
 		return err
 	}
-	s.Payload = canonical
+	s.Payload = bytes.TrimSpace(canonical.Bytes())
+	if len(s.Payload) > 16384 {
+		return errors.New("normalized payload exceeds 16 KiB")
+	}
 	return nil
 }
 
@@ -120,6 +125,22 @@ type Filter struct {
 	Status, Queue string
 	Before        int64
 	Limit         int
+}
+
+func (f Filter) Validate() error {
+	if f.Limit < 1 || f.Limit > 100 {
+		return errors.New("limit must be between 1 and 100")
+	}
+	if f.Status != "" && !ValidStatus(f.Status) {
+		return errors.New("invalid status")
+	}
+	if f.Queue != "" && !ValidQueue(f.Queue) {
+		return errors.New("invalid queue")
+	}
+	if f.Before < 0 {
+		return errors.New("invalid cursor")
+	}
+	return nil
 }
 
 type Page struct {

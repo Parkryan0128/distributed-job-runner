@@ -36,3 +36,17 @@ func TestSubmissionValidation(t *testing.T) {
 		t.Fatal("backoff is not capped")
 	}
 }
+
+func TestNormalizationPreservesLargeTextAcrossRepeatedValidation(t *testing.T) {
+	input := queue.Submit{Kind: "checksum", Payload: json.RawMessage(`{"text":"` + strings.Repeat("<>&", 3000) + `"}`)}
+	if err := input.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	first := string(input.Payload)
+	if err := input.Normalize(); err != nil {
+		t.Fatalf("valid payload failed its second validation: %v", err)
+	}
+	if string(input.Payload) != first {
+		t.Fatal("normalization changed an already normalized payload")
+	}
+}

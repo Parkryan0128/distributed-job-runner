@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/Parkryan0128/distributed-job-runner/internal/queue"
@@ -34,7 +35,8 @@ type Statistics struct {
 func decode(raw json.RawMessage, value any) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
-	if !json.Valid(raw) || string(raw) == "null" {
+	trimmed := bytes.TrimSpace(raw)
+	if !json.Valid(raw) || len(trimmed) == 0 || trimmed[0] != '{' {
 		return errors.New("invalid task payload")
 	}
 	return d.Decode(value)
@@ -57,6 +59,9 @@ func Validate(kind string, raw json.RawMessage) error {
 		}
 		if len(p.Text) > 12000 {
 			return errors.New("text exceeds 12000 bytes")
+		}
+		if strings.ContainsRune(p.Text, 0) {
+			return errors.New("text cannot contain a null character")
 		}
 	case "statistics":
 		var p Statistics

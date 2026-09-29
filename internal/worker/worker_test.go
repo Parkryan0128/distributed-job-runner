@@ -123,7 +123,12 @@ func TestTimeoutAndPanicReachRetryLimit(t *testing.T) {
 			j := submit(t, s, "demo", `{"work_ms":10000}`, 1, 1)
 			var h worker.Handler
 			if kind == "panic" {
-				h = func(context.Context, queue.Job) (json.RawMessage, error) { panic("broken handler") }
+				h = func(ctx context.Context, job queue.Job) (json.RawMessage, error) {
+					if job.ID == j.ID {
+						panic("broken handler")
+					}
+					return task.Run(ctx, job)
+				}
 			}
 			start(t, s, "worker", h)
 			got := await(t, s, j.ID, "dead")
@@ -137,6 +142,8 @@ func TestTimeoutAndPanicReachRetryLimit(t *testing.T) {
 			if !strings.Contains(got.Error, want) {
 				t.Fatalf("error: %s", got.Error)
 			}
+			next := submit(t, s, "demo", `{}`, 1, 30)
+			await(t, s, next.ID, "succeeded")
 		})
 	}
 }
