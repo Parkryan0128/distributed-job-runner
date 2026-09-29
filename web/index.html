@@ -83,22 +83,25 @@
             <span class="muted small">Refreshes every 1.5s</span>
           </div>
           <div class="filters">
-            <label
-              >Status<select id="status-filter">
+            <div class="select-field">
+              <label for="status-filter">Status</label
+              ><select id="status-filter">
                 <option value="">All statuses</option>
                 <option value="queued">Queued</option>
                 <option value="running">Running</option>
                 <option value="succeeded">Succeeded</option>
                 <option value="dead">Dead letter</option>
                 <option value="canceled">Canceled</option>
-              </select></label
-            ><label
-              >Queue<select id="queue-filter">
+              </select>
+            </div>
+            <div class="select-field">
+              <label for="queue-filter">Queue</label
+              ><select id="queue-filter">
                 <option value="">All queues</option>
                 <option value="default">default</option>
                 <option value="reports">reports</option>
-              </select></label
-            >
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table>
@@ -214,18 +217,21 @@
           ><button type="button" data-preset="long">Long job</button>
         </div>
         <div class="form-grid">
-          <label
-            >Task<select id="kind" name="kind">
+          <div class="select-field">
+            <label for="kind">Task</label
+            ><select id="kind" name="kind">
               <option value="demo">Demo task</option>
               <option value="checksum">SHA-256 checksum</option>
               <option value="statistics">Statistics</option>
-            </select></label
-          ><label
-            >Queue<select id="queue" name="queue">
+            </select>
+          </div>
+          <div class="select-field">
+            <label for="queue">Queue</label
+            ><select id="queue" name="queue">
               <option value="default">default</option>
               <option value="reports">reports</option>
-            </select></label
-          >
+            </select>
+          </div>
         </div>
         <label for="job-payload">Payload</label
         ><textarea

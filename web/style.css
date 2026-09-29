@@ -672,3 +672,9 @@ dialog .muted {
     font-size: 18px;
   }
 }
+
+.filters .select-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
