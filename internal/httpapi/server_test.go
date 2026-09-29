@@ -195,3 +195,15 @@ func TestStatsAndPrometheusMetricsReflectJobStates(t *testing.T) {
 		t.Fatalf("metrics: %s", w.Body)
 	}
 }
+
+func TestRouteRegistrationAndStaticAssetsWithoutDatabase(t *testing.T) {
+	api := httpapi.Server{Store: queue.New(nil), Token: token}
+	h, err := api.Handler(fstest.MapFS{"index.html": {Data: []byte("Job Runner")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expect(t, request(h, "GET", "/", "", "", false), 200)
+	expect(t, request(h, "GET", "/healthz", "", "", false), 200)
+	expect(t, request(h, "GET", "/api/jobs", "", "", false), 401)
+	expect(t, request(h, "POST", "/", "", "", false), 405)
+}

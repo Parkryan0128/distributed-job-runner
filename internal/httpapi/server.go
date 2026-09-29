@@ -51,7 +51,14 @@ func (s *Server) Handler(assets fs.FS) (http.Handler, error) {
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "route not found") })
 	if assets != nil {
-		mux.Handle("GET /", http.FileServerFS(assets))
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead {
+				w.Header().Set("Allow", "GET, HEAD")
+				writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			http.FileServerFS(assets).ServeHTTP(w, r)
+		}))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
