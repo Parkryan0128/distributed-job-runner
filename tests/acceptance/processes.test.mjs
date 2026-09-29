@@ -134,3 +134,41 @@ test(
     assert.deepEqual(restored, finished);
   },
 );
+
+test(
+  "database outage stops active work and workers recover after reconnecting",
+  { timeout: 60000 },
+  async () => {
+    const created = await api("/api/jobs", {
+      kind: "demo",
+      payload: { work_ms: 12000 },
+      max_attempts: 3,
+      timeout_seconds: 30,
+    });
+    await until(created.id, (j) => j.status === "running");
+    compose("pause", "postgres");
+    try {
+      const responses = await Promise.all([
+        fetch(`${base}/readyz`, { signal: AbortSignal.timeout(8000) }),
+        fetch(`${base}/api/jobs`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(8000),
+        }),
+      ]);
+      for (const response of responses) assert.equal(response.status, 503);
+      assert.deepEqual(await responses[0].json(), {
+        error: "database unavailable",
+      });
+      assert.deepEqual(await responses[1].json(), {
+        error: "service temporarily unavailable",
+      });
+      await delay(2000);
+    } finally {
+      compose("unpause", "postgres");
+    }
+    const recovered = await until(created.id, (j) => j.status === "succeeded");
+    assert.equal(recovered.attempt, 2);
+    assert.equal(recovered.attempts[0].status, "expired");
+    assert.equal(recovered.attempts[1].status, "succeeded");
+  },
+);

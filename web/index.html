@@ -22,9 +22,9 @@
     </header>
     <section id="login" class="login-card">
       <p class="eyebrow">DISTRIBUTED JOB RUNNER</p>
-      <h1>A small console.<br />A lot happening behind it.</h1>
+      <h1>Job Runner</h1>
       <p class="muted">
-        Submit work, follow its progress, and see how workers handle failures.
+        Submit jobs and inspect their results and execution history.
       </p>
       <form id="login-form">
         <label for="token">API token</label>
@@ -45,9 +45,9 @@
     <main id="console" hidden>
       <section class="page-heading">
         <div>
-          <p class="eyebrow">WORKSPACE / DEFAULT</p>
+          <p class="eyebrow">JOB QUEUE</p>
           <h1>Execution overview</h1>
-          <p class="muted">Every job, every attempt, one place.</p>
+          <p class="muted">Queue status and recent executions.</p>
         </div>
         <button id="new-job" class="primary">+ New job</button>
       </section>
@@ -188,10 +188,7 @@
           </div>
         </aside>
       </section>
-      <footer>
-        Go + PostgreSQL
-        <span>Independent workers · Durable jobs · Leased execution</span>
-      </footer>
+      <footer>Go + PostgreSQL</footer>
     </main>
     <dialog id="composer">
       <form id="job-form">

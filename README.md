@@ -65,7 +65,7 @@ npm run test:acceptance
 npm run test:browser
 ```
 
-Process tests kill a demo worker and restart the API. [CI](https://github.com/Parkryan0128/distributed-job-runner/actions/workflows/ci.yml) runs the full suite against PostgreSQL, builds the Docker image, and checks the console in Chromium. Logs, traces, and screenshots are attached to each run. Node.js is only needed for these development checks; the app itself runs as a Go binary.
+Process tests kill a demo worker, pause PostgreSQL, and restart the API. [CI](https://github.com/Parkryan0128/distributed-job-runner/actions/workflows/ci.yml) runs the full suite against PostgreSQL, builds the Docker image, and checks the console in Chromium. Logs, traces, and screenshots are attached to each run. Node.js is only needed for these development checks; the app itself runs as a Go binary.
 
 ## Project structure
 

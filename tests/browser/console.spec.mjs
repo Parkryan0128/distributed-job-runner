@@ -180,3 +180,97 @@ test("mobile console and composer fit the viewport", async ({
     fullPage: true,
   });
 });
+
+test("temporary API failure recovers without losing the selected job", async ({
+  page,
+}) => {
+  await login(page);
+  const id = await submit(page, "Quick success");
+  await expect(page.locator("#detail-status")).toHaveText("Succeeded");
+  let unavailable = true;
+  await page.route("**/api/stats", async (route) => {
+    if (unavailable)
+      return route.fulfill({
+        status: 503,
+        contentType: "text/html",
+        body: "<h1>Service unavailable</h1>",
+      });
+    return route.continue();
+  });
+  await expect(page.locator("#connection")).toHaveText("Reconnecting");
+  await expect(page.locator("#error")).toContainText("Request failed (503)");
+  unavailable = false;
+  await expect(page.locator("#connection")).toHaveText("Live");
+  await expect(page.locator("#error")).toBeEmpty();
+  await expect(page.getByTestId("job-id")).toHaveText(id);
+});
+
+test("disconnect discards an in-flight submission response", async ({
+  page,
+}) => {
+  await login(page);
+  let release;
+  let committed;
+  let intercepted;
+  const blocked = new Promise((resolve) => {
+    intercepted = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let delivered;
+  const finished = new Promise((resolve) => {
+    delivered = resolve;
+  });
+  await page.route("**/api/jobs", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const response = await route.fetch();
+    committed = await response.json();
+    intercepted();
+    await gate;
+    await route.fulfill({ response }).catch(() => {});
+    delivered();
+  });
+  await page.getByRole("button", { name: "+ New job" }).click();
+  await page
+    .getByRole("button", { name: "Quick success", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Submit job" }).click();
+  await blocked;
+  await page.getByRole("button", { name: "Close new job" }).click();
+  await page.getByRole("button", { name: "Disconnect" }).click();
+  release();
+  await finished;
+  await page.getByLabel("API token").fill(token);
+  await page.getByRole("button", { name: "Connect to runner" }).click();
+  await expect(page.locator("#connection")).toHaveText("Live");
+  await expect(page.getByTestId("job-id")).not.toBeVisible();
+  await expect(page.locator("#notice")).toBeEmpty();
+  await expect(page.locator(`[data-job-id="${committed.id}"]`)).toBeVisible();
+  await page.unroute("**/api/jobs");
+  const next = await submit(page, "Quick success");
+  expect(next).not.toBe(committed.id);
+});
+
+test("revoked API credentials return the console to login", async ({
+  page,
+}) => {
+  await login(page);
+  await submit(page, "Quick success");
+  await page.route("**/api/stats", (route) =>
+    route.fulfill({
+      status: 401,
+      contentType: "application/json",
+      body: '{"error":"valid bearer token required"}',
+    }),
+  );
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await expect(page.locator("#login-error")).toContainText(
+    "token is no longer valid",
+  );
+  await expect(page.getByTestId("job-id")).not.toBeVisible();
+  await page.unroute("**/api/stats");
+  await page.getByLabel("API token").fill(token);
+  await page.getByRole("button", { name: "Connect to runner" }).click();
+  await expect(page.locator("#connection")).toHaveText("Live");
+});

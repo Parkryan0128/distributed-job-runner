@@ -10,6 +10,7 @@ const labels = {
 };
 const state = {
   token: "",
+  session: new AbortController(),
   selected: null,
   before: 0,
   next: 0,
@@ -28,17 +29,31 @@ const samples = {
 };
 
 async function api(path, options = {}) {
+  const signals = [state.session.signal, AbortSignal.timeout(10000)];
+  if (options.signal) signals.push(options.signal);
+  const signal = AbortSignal.any(signals);
   const response = await fetch(path, {
     ...options,
+    signal,
     headers: {
       Authorization: `Bearer ${state.token}`,
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
     },
   });
-  const body = await response.json();
-  if (!response.ok)
-    throw new Error(body.error || `Request failed (${response.status})`);
+  const body = await response.json().catch(() => {
+    signal.throwIfAborted();
+    return null;
+  });
+  if (!response.ok) {
+    const error = new Error(
+      body?.error || `Request failed (${response.status})`,
+    );
+    error.status = response.status;
+    throw error;
+  }
+  if (!body || typeof body !== "object")
+    throw new Error("Server returned an invalid response");
   return body;
 }
 
@@ -191,6 +206,12 @@ async function refresh() {
     $("#connection").classList.add("live");
   } catch (error) {
     if (generation !== state.generation || error.name === "AbortError") return;
+    if (error.status === 401) {
+      disconnect();
+      $("#login-error").textContent =
+        "Your token is no longer valid. Connect again with the current token.";
+      return;
+    }
     $("#error").textContent = `${error.message}. Retrying…`;
     $("#connection").textContent = "Reconnecting";
     $("#connection").classList.remove("live");
@@ -229,8 +250,15 @@ $("#login-form").addEventListener("submit", async (event) => {
   }
 });
 
-$("#disconnect").addEventListener("click", () => {
+function disconnect() {
+  state.session.abort();
+  state.session = new AbortController();
   state.token = "";
+  state.pending = null;
+  state.submitting = false;
+  state.canceling = false;
+  $("#submit-job").disabled = false;
+  $("#job-form").reset();
   state.selected = null;
   state.before = 0;
   state.rows = "";
@@ -249,7 +277,9 @@ $("#disconnect").addEventListener("click", () => {
   $("#detail-status").replaceChildren();
   $("#notice").textContent = "";
   $("#token").focus();
-});
+}
+
+$("#disconnect").addEventListener("click", disconnect);
 
 for (const id of ["#status-filter", "#queue-filter"])
   $(id).addEventListener("change", () => {
@@ -301,6 +331,7 @@ $("#job-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.submitting) return;
   $("#submit-error").textContent = "";
+  const session = state.session;
   const fields = new FormData(event.currentTarget);
   let body;
   try {
@@ -327,6 +358,7 @@ $("#job-form").addEventListener("submit", async (event) => {
       body,
       headers: { "Idempotency-Key": state.pending.key },
     });
+    if (session !== state.session) return;
     state.pending = null;
     $("#composer").close();
     $("#status-filter").value = "";
@@ -336,27 +368,34 @@ $("#job-form").addEventListener("submit", async (event) => {
       `Job ${job.id.slice(0, 8)} added to ${job.queue}.`;
     selectJob(job.id);
   } catch (error) {
+    if (session !== state.session) return;
     $("#submit-error").textContent =
       `${error.message}. You can retry this submission safely.`;
   } finally {
-    state.submitting = false;
-    $("#submit-job").disabled = false;
+    if (session === state.session) {
+      state.submitting = false;
+      $("#submit-job").disabled = false;
+    }
   }
 });
 
 $("#cancel-job").addEventListener("click", async () => {
   const id = state.selected;
   if (!id || state.canceling) return;
+  const session = state.session;
   state.canceling = true;
   $("#cancel-job").disabled = true;
   try {
     await api(`/api/jobs/${id}/cancel`, { method: "POST" });
+    if (session !== state.session) return;
     $("#notice").textContent = `Job ${id.slice(0, 8)} canceled.`;
-    await refresh();
   } catch (error) {
+    if (session !== state.session) return;
     $("#error").textContent = error.message;
   } finally {
-    state.canceling = false;
-    refresh();
+    if (session === state.session) {
+      state.canceling = false;
+      refresh();
+    }
   }
 });
