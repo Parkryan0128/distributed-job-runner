@@ -96,3 +96,5 @@ The activity panel shows one compact ID block per job. The shared queue stays on
 Run **one API process** for this public demo: it owns the in-memory control lease, one generator, and the event fan-out. An API restart releases control and stops generation while persisted jobs continue on workers. Multiple API replicas would require shared control/generator coordination; this version deliberately does not claim that capability. The session cookie arbitrates turns; it is not account authentication or a defense against a determined visitor repeatedly taking turns.
 
 For public hosting, put the API behind HTTPS and configure the proxy to stream `/api/events` without response buffering or compression buffering. Allow long-lived responses; the server emits periodic messages and disconnects slow readers. It bounds each subscriber's queue at 64 events and allows 200 SSE connections per API instance. Test the actual hosting proxy before publishing. No public deployment is performed by `docker compose up`.
+
+For the shared portfolio VM and automatic releases, see [deployment](docs/deployment.md).

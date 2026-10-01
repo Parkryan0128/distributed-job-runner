@@ -8,7 +8,10 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
     services:
       postgres:
         image: postgres:16-alpine
@@ -44,6 +47,19 @@ jobs:
       - run: npm run test:acceptance
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - name: Verify production HTTPS and SSE
+        run: bash scripts/deployment-ci.sh
+      - name: Publish tested image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}:sha-${GITHUB_SHA}"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker tag distributed-job-runner:local "$image"
+          docker push "$image"
+          docker logout ghcr.io
+          printf 'Published tested image: `%s`\n' "$image" >> "$GITHUB_STEP_SUMMARY"
       - name: Container logs
         if: always()
         run: docker compose logs --no-color > compose.log

@@ -4,3 +4,7 @@ coverage.out
 /test-results/
 /playwright-report/
 /node_modules/
+
+/deploy/.env.production*
+/deploy/.deployed-image
+/deploy/.previous-image

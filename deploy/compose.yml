@@ -1,0 +1,95 @@
+name: job-runner-production
+x-runtime: &runtime
+  restart: unless-stopped
+  logging:
+    driver: local
+    options: { max-size: "10m", max-file: "3" }
+x-app: &app
+  <<: *runtime
+  image: ${APP_IMAGE:?Run deploy/init-env.sh first}
+  environment: &environment
+    DATABASE_URL: postgres://runner:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@postgres:5432/runner?sslmode=disable
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: [/tmp]
+  stop_grace_period: 15s
+  networks: [backend]
+  depends_on:
+    migrate: { condition: service_completed_successfully }
+services:
+  postgres:
+    <<: *runtime
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: runner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      POSTGRES_DB: runner
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    networks: [backend]
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.75
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -h 127.0.0.1 -U runner -d runner]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    image: ${APP_IMAGE:?Run deploy/init-env.sh first}
+    command: [migrate]
+    environment: *environment
+    networks: [backend]
+    mem_limit: 128m
+    depends_on:
+      postgres: { condition: service_healthy }
+  api:
+    <<: *app
+    command: [api]
+    environment:
+      <<: *environment
+      LISTEN_ADDR: ":8080"
+      SECURE_COOKIES: "true"
+      HISTORY_RETENTION_HOURS: "24"
+      GOMEMLIMIT: 192MiB
+    networks:
+      backend:
+      edge:
+        aliases: [job-runner-api]
+    mem_limit: 256m
+    memswap_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: [CMD, runner, healthcheck]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+  worker-a:
+    <<: *app
+    command: [worker]
+    environment:
+      <<: *environment
+      WORKER_ID: worker-a
+      CONCURRENCY: 2
+      LEASE_SECONDS: 10
+      GOMEMLIMIT: 96MiB
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+  worker-b:
+    <<: *app
+    command: [worker]
+    environment:
+      <<: *environment
+      WORKER_ID: worker-b
+      CONCURRENCY: 2
+      LEASE_SECONDS: 10
+      GOMEMLIMIT: 96MiB
+    mem_limit: 128m
+    memswap_limit: 128m
+    cpus: 0.25
+volumes:
+  postgres-data:
+networks:
+  backend: { internal: true }
+  edge: { name: portfolio-edge, external: true }
