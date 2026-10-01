@@ -104,16 +104,6 @@ The process tests kill a worker, restart the API, and temporarily pause PostgreS
 
 [CI](https://github.com/Parkryan0128/distributed-job-runner/actions/workflows/ci.yml) runs these checks and tests the production configuration through HTTPS, including secure cookies, shared control, retries, and SSE.
 
-## Deployment
-
-The live demo runs on a VM behind Caddy. A successful main CI run publishes a Docker image tagged with the commit SHA; [CD](https://github.com/Parkryan0128/distributed-job-runner/actions/workflows/deploy.yml) deploys that image over SSH and checks HTTPS readiness and both workers.
-
-The demo uses **one API process** for shared control, workload generation, and SSE broadcasting. Workers run separately. An API restart releases control and stops generation; persisted jobs continue on workers.
-
-Production retains completed, dead, and canceled jobs for 24 hours. Local history cleanup is disabled by default. Submission limits and container memory limits keep the public demo bounded.
-
-See [deployment](docs/deployment.md) for VM setup and rollback, or [development and API usage](docs/development.md) to run the processes directly.
-
 ## Contact
 
 - **Name:** Ryan Park
