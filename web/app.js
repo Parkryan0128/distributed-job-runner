@@ -9,8 +9,6 @@ const labels = {
   expired: "Expired",
 };
 const state = {
-  token: "",
-  session: new AbortController(),
   selected: null,
   before: 0,
   next: 0,
@@ -29,14 +27,13 @@ const samples = {
 };
 
 async function api(path, options = {}) {
-  const signals = [state.session.signal, AbortSignal.timeout(10000)];
+  const signals = [AbortSignal.timeout(10000)];
   if (options.signal) signals.push(options.signal);
   const signal = AbortSignal.any(signals);
   const response = await fetch(path, {
     ...options,
     signal,
     headers: {
-      Authorization: `Bearer ${state.token}`,
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
     },
@@ -46,11 +43,7 @@ async function api(path, options = {}) {
     return null;
   });
   if (!response.ok) {
-    const error = new Error(
-      body?.error || `Request failed (${response.status})`,
-    );
-    error.status = response.status;
-    throw error;
+    throw new Error(body?.error || `Request failed (${response.status})`);
   }
   if (!body || typeof body !== "object")
     throw new Error("Server returned an invalid response");
@@ -177,7 +170,6 @@ function renderDetail(job) {
 }
 
 async function refresh() {
-  if (!state.token) return;
   clearTimeout(state.timer);
   state.controller?.abort();
   const controller = new AbortController();
@@ -206,17 +198,12 @@ async function refresh() {
     $("#connection").classList.add("live");
   } catch (error) {
     if (generation !== state.generation || error.name === "AbortError") return;
-    if (error.status === 401) {
-      disconnect();
-      $("#login-error").textContent =
-        "Your token is no longer valid. Connect again with the current token.";
-      return;
-    }
+
     $("#error").textContent = `${error.message}. Retrying…`;
     $("#connection").textContent = "Reconnecting";
     $("#connection").classList.remove("live");
   } finally {
-    if (generation === state.generation && state.token)
+    if (generation === state.generation)
       state.timer = setTimeout(refresh, 1500);
   }
 }
@@ -228,59 +215,6 @@ function selectJob(id) {
   $("#detail-empty").hidden = false;
   refresh();
 }
-
-$("#login-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const button = event.submitter;
-  button.disabled = true;
-  state.token = $("#token").value;
-  try {
-    await api("/api/stats");
-    $("#token").value = "";
-    $("#login-error").textContent = "";
-    $("#login").hidden = true;
-    $("#console").hidden = false;
-    $("#disconnect").hidden = false;
-    await refresh();
-  } catch (error) {
-    state.token = "";
-    $("#login-error").textContent = error.message;
-  } finally {
-    button.disabled = false;
-  }
-});
-
-function disconnect() {
-  state.session.abort();
-  state.session = new AbortController();
-  state.token = "";
-  state.pending = null;
-  state.submitting = false;
-  state.canceling = false;
-  $("#submit-job").disabled = false;
-  $("#job-form").reset();
-  state.selected = null;
-  state.before = 0;
-  state.rows = "";
-  state.generation++;
-  state.controller?.abort();
-  clearTimeout(state.timer);
-  $("#composer").close();
-  $("#console").hidden = true;
-  $("#disconnect").hidden = true;
-  $("#login").hidden = false;
-  $("#connection").textContent = "Not connected";
-  $("#connection").classList.remove("live");
-  $("#jobs").replaceChildren();
-  $("#detail").hidden = true;
-  $("#detail-empty").hidden = false;
-  $("#detail-status").replaceChildren();
-  $("#notice").textContent = "";
-  $("#action-error").textContent = "";
-  $("#token").focus();
-}
-
-$("#disconnect").addEventListener("click", disconnect);
 
 for (const id of ["#status-filter", "#queue-filter"])
   $(id).addEventListener("change", () => {
@@ -332,7 +266,6 @@ $("#job-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (state.submitting) return;
   $("#submit-error").textContent = "";
-  const session = state.session;
   const fields = new FormData(event.currentTarget);
   let body;
   try {
@@ -359,7 +292,6 @@ $("#job-form").addEventListener("submit", async (event) => {
       body,
       headers: { "Idempotency-Key": state.pending.key },
     });
-    if (session !== state.session) return;
     state.pending = null;
     $("#composer").close();
     $("#status-filter").value = "";
@@ -369,35 +301,29 @@ $("#job-form").addEventListener("submit", async (event) => {
       `Job ${job.id.slice(0, 8)} added to ${job.queue}.`;
     selectJob(job.id);
   } catch (error) {
-    if (session !== state.session) return;
     $("#submit-error").textContent =
       `${error.message}. You can retry this submission safely.`;
   } finally {
-    if (session === state.session) {
-      state.submitting = false;
-      $("#submit-job").disabled = false;
-    }
+    state.submitting = false;
+    $("#submit-job").disabled = false;
   }
 });
 
 $("#cancel-job").addEventListener("click", async () => {
   const id = state.selected;
   if (!id || state.canceling) return;
-  const session = state.session;
   state.canceling = true;
   $("#action-error").textContent = "";
   $("#cancel-job").disabled = true;
   try {
     await api(`/api/jobs/${id}/cancel`, { method: "POST" });
-    if (session !== state.session) return;
     $("#notice").textContent = `Job ${id.slice(0, 8)} canceled.`;
   } catch (error) {
-    if (session !== state.session) return;
     $("#action-error").textContent = error.message;
   } finally {
-    if (session === state.session) {
-      state.canceling = false;
-      refresh();
-    }
+    state.canceling = false;
+    refresh();
   }
 });
+
+refresh();

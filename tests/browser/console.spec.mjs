@@ -1,11 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-const token = process.env.API_TOKEN || "local-runner-token-change-me";
-
-async function login(page) {
+async function openConsole(page) {
   await page.goto("/");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect to runner" }).click();
   await expect(
     page.getByRole("heading", { name: "Execution overview" }),
   ).toBeVisible();
@@ -23,23 +19,16 @@ async function submit(page, preset) {
 
 async function create(request, payload) {
   const response = await request.post("/api/jobs", {
-    headers: { Authorization: `Bearer ${token}` },
     data: { kind: "demo", payload },
   });
   expect(response.status()).toBe(201);
   return response.json();
 }
 
-test("authentication, retry history, filters and disconnect", async ({
+test("console opens directly and shows retry history and filters", async ({
   page,
 }, testInfo) => {
-  await page.goto("/");
-  await page.getByLabel("API token").fill("this-is-the-wrong-token");
-  await page.getByRole("button", { name: "Connect to runner" }).click();
-  await expect(page.locator("#login-error")).toHaveText(
-    "valid bearer token required",
-  );
-  await login(page);
+  await openConsole(page);
   const id = await submit(page, "Retry twice");
   await expect(page.locator("#detail-status")).toHaveText("Succeeded");
   await expect(page.locator("#attempts li")).toHaveCount(3);
@@ -52,15 +41,12 @@ test("authentication, retry history, filters and disconnect", async ({
     path: testInfo.outputPath("overview.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "Disconnect" }).click();
-  await expect(page.getByLabel("API token")).toHaveValue("");
-  await expect(page.getByTestId("job-id")).not.toBeVisible();
 });
 
 test("running work can be canceled and exhausted jobs show their errors", async ({
   page,
 }) => {
-  await login(page);
+  await openConsole(page);
   await submit(page, "Long job");
   await expect(page.locator("#detail-status")).toHaveText("Running");
   await page.getByRole("button", { name: "Cancel job" }).click();
@@ -78,7 +64,7 @@ test("running work can be canceled and exhausted jobs show their errors", async 
 test("checksum task displays its actual result and rejects malformed JSON", async ({
   page,
 }) => {
-  await login(page);
+  await openConsole(page);
   await page.getByRole("button", { name: "+ New job" }).click();
   await page.getByLabel("Task", { exact: true }).selectOption("checksum");
   await page.getByLabel("Payload", { exact: true }).fill("{");
@@ -97,7 +83,7 @@ test("checksum task displays its actual result and rejects malformed JSON", asyn
 test("a failed cancellation stays visible after polling and can be retried", async ({
   page,
 }) => {
-  await login(page);
+  await openConsole(page);
   await submit(page, "Long job");
   await expect(page.locator("#detail-status")).toHaveText("Running");
   await page.route("**/cancel", (route) =>
@@ -122,7 +108,7 @@ test("a failed cancellation stays visible after polling and can be retried", asy
 test("retrying a lost submission response reuses the same job", async ({
   page,
 }) => {
-  await login(page);
+  await openConsole(page);
   let committed;
   const keys = [];
   await page.route("**/api/jobs", async (route) => {
@@ -158,7 +144,7 @@ test("a delayed previous selection cannot overwrite the current job", async ({
 }) => {
   const old = await create(request, { work_ms: 0 });
   const current = await create(request, { work_ms: 0 });
-  await login(page);
+  await openConsole(page);
   let release;
   let intercepted;
   const blocked = new Promise((resolve) => {
@@ -189,7 +175,7 @@ test("mobile console and composer fit the viewport", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await login(page);
+  await openConsole(page);
   await page.getByRole("button", { name: "+ New job" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   expect(
@@ -209,7 +195,7 @@ test("mobile console and composer fit the viewport", async ({
 test("temporary API failure recovers without losing the selected job", async ({
   page,
 }) => {
-  await login(page);
+  await openConsole(page);
   const id = await submit(page, "Quick success");
   await expect(page.locator("#detail-status")).toHaveText("Succeeded");
   let unavailable = true;
@@ -230,72 +216,23 @@ test("temporary API failure recovers without losing the selected job", async ({
   await expect(page.getByTestId("job-id")).toHaveText(id);
 });
 
-test("disconnect discards an in-flight submission response", async ({
+test("the console shows four jobs running concurrently", async ({
   page,
+  request,
 }) => {
-  await login(page);
-  let release;
-  let committed;
-  let intercepted;
-  const blocked = new Promise((resolve) => {
-    intercepted = resolve;
-  });
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
-  let delivered;
-  const finished = new Promise((resolve) => {
-    delivered = resolve;
-  });
-  await page.route("**/api/jobs", async (route) => {
-    if (route.request().method() !== "POST") return route.continue();
-    const response = await route.fetch();
-    committed = await response.json();
-    intercepted();
-    await gate;
-    await route.fulfill({ response }).catch(() => {});
-    delivered();
-  });
-  await page.getByRole("button", { name: "+ New job" }).click();
-  await page
-    .getByRole("button", { name: "Quick success", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Submit job" }).click();
-  await blocked;
-  await page.getByRole("button", { name: "Close new job" }).click();
-  await page.getByRole("button", { name: "Disconnect" }).click();
-  release();
-  await finished;
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect to runner" }).click();
-  await expect(page.locator("#connection")).toHaveText("Live");
-  await expect(page.getByTestId("job-id")).not.toBeVisible();
-  await expect(page.locator("#notice")).toBeEmpty();
-  await expect(page.locator(`[data-job-id="${committed.id}"]`)).toBeVisible();
-  await page.unroute("**/api/jobs");
-  const next = await submit(page, "Quick success");
-  expect(next).not.toBe(committed.id);
-});
-
-test("revoked API credentials return the console to login", async ({
-  page,
-}) => {
-  await login(page);
-  await submit(page, "Quick success");
-  await page.route("**/api/stats", (route) =>
-    route.fulfill({
-      status: 401,
-      contentType: "application/json",
-      body: '{"error":"valid bearer token required"}',
-    }),
+  const jobs = await Promise.all(
+    Array.from({ length: 4 }, () => create(request, { work_ms: 6000 })),
   );
-  await expect(page.getByLabel("API token")).toBeVisible();
-  await expect(page.locator("#login-error")).toContainText(
-    "token is no longer valid",
-  );
-  await expect(page.getByTestId("job-id")).not.toBeVisible();
-  await page.unroute("**/api/stats");
-  await page.getByLabel("API token").fill(token);
-  await page.getByRole("button", { name: "Connect to runner" }).click();
-  await expect(page.locator("#connection")).toHaveText("Live");
+  await openConsole(page);
+  for (const job of jobs) {
+    await expect(page.locator(`[data-job-id="${job.id}"]`)).toContainText(
+      "Running",
+    );
+  }
+  await expect(page.locator("#count-running")).toHaveText("4");
+  for (const job of jobs) {
+    await expect(page.locator(`[data-job-id="${job.id}"]`)).toContainText(
+      "Succeeded",
+    );
+  }
 });

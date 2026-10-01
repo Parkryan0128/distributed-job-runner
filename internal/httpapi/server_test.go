@@ -18,24 +18,19 @@ import (
 	"github.com/Parkryan0128/distributed-job-runner/internal/testdb"
 )
 
-const token = "test-runner-token-1234"
-
 func setup(t *testing.T) (*queue.Store, http.Handler) {
 	t.Helper()
 	s, _ := testdb.New(t)
-	api := httpapi.Server{Store: s, Token: token, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	api := httpapi.Server{Store: s, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	h, err := api.Handler(fstest.MapFS{"index.html": {Data: []byte("<h1>Job runner</h1>")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s, h
 }
-func request(h http.Handler, method, path, body, key string, auth bool) *httptest.ResponseRecorder {
+func request(h http.Handler, method, path, body, key string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
-	if auth {
-		r.Header.Set("Authorization", "Bearer "+token)
-	}
 	if key != "" {
 		r.Header.Set("Idempotency-Key", key)
 	}
@@ -54,7 +49,7 @@ func expect(t *testing.T, w *httptest.ResponseRecorder, status int) {
 }
 func submitted(t *testing.T, h http.Handler, body string) queue.Job {
 	t.Helper()
-	w := request(h, "POST", "/api/jobs", body, "", true)
+	w := request(h, "POST", "/api/jobs", body, "")
 	expect(t, w, 201)
 	var j queue.Job
 	if err := json.Unmarshal(w.Body.Bytes(), &j); err != nil {
@@ -63,31 +58,24 @@ func submitted(t *testing.T, h http.Handler, body string) queue.Job {
 	return j
 }
 
-func TestAPIRequiresTokenButHealthAndDashboardArePublic(t *testing.T) {
+func TestConsoleAndAPIWorkWithoutCredentials(t *testing.T) {
 	_, h := setup(t)
-	for _, route := range []struct{ method, path string }{{"GET", "/api/jobs"}, {"POST", "/api/jobs"}, {"GET", "/api/stats"}, {"GET", "/metrics"}, {"POST", "/api/jobs/" + queue.NewID() + "/cancel"}} {
-		expect(t, request(h, route.method, route.path, `{}`, "", false), 401)
+	for _, path := range []string{"/", "/healthz", "/readyz", "/api/jobs", "/api/stats"} {
+		expect(t, request(h, "GET", path, "", ""), 200)
 	}
-	expect(t, request(h, "GET", "/healthz", "", "", false), 200)
-	expect(t, request(h, "GET", "/readyz", "", "", false), 200)
-	expect(t, request(h, "GET", "/", "", "", false), 200)
-	r := httptest.NewRequest("GET", "/api/jobs", nil)
-	r.Header.Set("Authorization", "Bearer incorrect-token")
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, r)
-	expect(t, w, 401)
+	submitted(t, h, `{"kind":"demo","payload":{}}`)
 }
 
 func TestAPISubmissionReplayConflictAndDetail(t *testing.T) {
 	_, h := setup(t)
 	body := `{"kind":"checksum","payload":{"text":"abc"}}`
-	first := request(h, "POST", "/api/jobs", body, "same-request", true)
+	first := request(h, "POST", "/api/jobs", body, "same-request")
 	expect(t, first, 201)
 	var j queue.Job
 	if err := json.Unmarshal(first.Body.Bytes(), &j); err != nil {
 		t.Fatal(err)
 	}
-	replay := request(h, "POST", "/api/jobs", body, "same-request", true)
+	replay := request(h, "POST", "/api/jobs", body, "same-request")
 	expect(t, replay, 200)
 	var again queue.Job
 	if err := json.Unmarshal(replay.Body.Bytes(), &again); err != nil {
@@ -96,8 +84,8 @@ func TestAPISubmissionReplayConflictAndDetail(t *testing.T) {
 	if j.ID != again.ID || first.Header().Get("Location") != "/api/jobs/"+j.ID {
 		t.Fatal("replay created another job")
 	}
-	expect(t, request(h, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`, "same-request", true), 409)
-	got := request(h, "GET", "/api/jobs/"+j.ID, "", "", true)
+	expect(t, request(h, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`, "same-request"), 409)
+	got := request(h, "GET", "/api/jobs/"+j.ID, "", "")
 	expect(t, got, 200)
 	var d queue.Detail
 	if err := json.Unmarshal(got.Body.Bytes(), &d); err != nil {
@@ -116,7 +104,7 @@ func TestInvalidTaskValuesDoNotEnterTheQueue(t *testing.T) {
 		`{"kind":"checksum","payload":{"text":null}}`,
 		`{"kind":"checksum","payload":{}}`,
 	} {
-		expect(t, request(h, "POST", "/api/jobs", body, "", true), 400)
+		expect(t, request(h, "POST", "/api/jobs", body, ""), 400)
 	}
 	stats, err := s.Stats(context.Background())
 	if err != nil || stats.Queued != 0 {
@@ -129,12 +117,12 @@ func TestInvalidTaskValuesDoNotEnterTheQueue(t *testing.T) {
 func TestAPIRejectsInvalidAndOversizedRequests(t *testing.T) {
 	s, h := setup(t)
 	for _, body := range []string{`{`, `null`, `{}`, `{"kind":"demo","payload":{},"owner":"fake"}`, `{"kind":"shell","payload":{}}`, `{"kind":"demo","payload":{"work_ms":-1}}`, `{"kind":"demo","payload":{},"priority":10}`, `{"kind":"demo","payload":{},"max_attempts":-1}`, `{"kind":"statistics","payload":{"values":[]}}`, `{"kind":"demo","payload":{}} {}`} {
-		expect(t, request(h, "POST", "/api/jobs", body, "", true), 400)
+		expect(t, request(h, "POST", "/api/jobs", body, ""), 400)
 	}
-	expect(t, request(h, "POST", "/api/jobs", `{"kind":"checksum","payload":{"text":"`+strings.Repeat("a", 33000)+`"}}`, "", true), 413)
-	expect(t, request(h, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`, strings.Repeat("x", 129), true), 400)
+	expect(t, request(h, "POST", "/api/jobs", `{"kind":"checksum","payload":{"text":"`+strings.Repeat("a", 33000)+`"}}`, ""), 413)
+	expect(t, request(h, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`, strings.Repeat("x", 129)), 400)
 	r := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(`{}`))
-	r.Header.Set("Authorization", "Bearer "+token)
+
 	r.Header.Set("Content-Type", "text/plain")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
@@ -151,7 +139,7 @@ func TestAPIListFiltersPaginationAndBadQueries(t *testing.T) {
 		submitted(t, h, `{"kind":"demo","payload":{},"queue":"reports","delay_seconds":60}`)
 	}
 	submitted(t, h, `{"kind":"demo","payload":{}}`)
-	w := request(h, "GET", "/api/jobs?queue=reports&status=queued&limit=2", "", "", true)
+	w := request(h, "GET", "/api/jobs?queue=reports&status=queued&limit=2", "", "")
 	expect(t, w, 200)
 	var p queue.Page
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
@@ -160,7 +148,7 @@ func TestAPIListFiltersPaginationAndBadQueries(t *testing.T) {
 	if len(p.Jobs) != 2 || p.NextCursor == 0 {
 		t.Fatalf("page: %+v", p)
 	}
-	w = request(h, "GET", fmt.Sprintf("/api/jobs?queue=reports&limit=2&before=%d", p.NextCursor), "", "", true)
+	w = request(h, "GET", fmt.Sprintf("/api/jobs?queue=reports&limit=2&before=%d", p.NextCursor), "", "")
 	expect(t, w, 200)
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
 		t.Fatal(err)
@@ -169,17 +157,17 @@ func TestAPIListFiltersPaginationAndBadQueries(t *testing.T) {
 		t.Fatalf("next page: %+v", p)
 	}
 	for _, query := range []string{"limit=0", "limit=101", "limit=abc", "before=-1", "before=abc", "status=unknown", "queue=../bad"} {
-		expect(t, request(h, "GET", "/api/jobs?"+query, "", "", true), 400)
+		expect(t, request(h, "GET", "/api/jobs?"+query, "", ""), 400)
 	}
-	expect(t, request(h, "GET", "/api/jobs/nope", "", "", true), 400)
-	expect(t, request(h, "GET", "/api/jobs/"+queue.NewID(), "", "", true), 404)
+	expect(t, request(h, "GET", "/api/jobs/nope", "", ""), 400)
+	expect(t, request(h, "GET", "/api/jobs/"+queue.NewID(), "", ""), 404)
 }
 
 func TestAPICancellationAndTerminalConflict(t *testing.T) {
 	s, h := setup(t)
 	j := submitted(t, h, `{"kind":"demo","payload":{}}`)
 	for range 2 {
-		expect(t, request(h, "POST", "/api/jobs/"+j.ID+"/cancel", "", "", true), 200)
+		expect(t, request(h, "POST", "/api/jobs/"+j.ID+"/cancel", "", ""), 200)
 	}
 	j = submitted(t, h, `{"kind":"demo","payload":{}}`)
 	claimed, err := s.Claim(context.Background(), "worker", []string{"default"}, time.Minute)
@@ -189,16 +177,16 @@ func TestAPICancellationAndTerminalConflict(t *testing.T) {
 	if err := s.Finish(context.Background(), claimed, json.RawMessage(`{}`), "", false); err != nil {
 		t.Fatal(err)
 	}
-	expect(t, request(h, "POST", "/api/jobs/"+j.ID+"/cancel", "", "", true), 409)
-	expect(t, request(h, "POST", "/api/jobs/"+queue.NewID()+"/cancel", "", "", true), 404)
+	expect(t, request(h, "POST", "/api/jobs/"+j.ID+"/cancel", "", ""), 409)
+	expect(t, request(h, "POST", "/api/jobs/"+queue.NewID()+"/cancel", "", ""), 404)
 }
 
-func TestStatsAndPrometheusMetricsReflectJobStates(t *testing.T) {
+func TestStatsReflectJobStates(t *testing.T) {
 	_, h := setup(t)
 	j := submitted(t, h, `{"kind":"demo","payload":{}}`)
 	submitted(t, h, `{"kind":"demo","payload":{}}`)
-	expect(t, request(h, "POST", "/api/jobs/"+j.ID+"/cancel", "", "", true), 200)
-	w := request(h, "GET", "/api/stats", "", "", true)
+	expect(t, request(h, "POST", "/api/jobs/"+j.ID+"/cancel", "", ""), 200)
+	w := request(h, "GET", "/api/stats", "", "")
 	expect(t, w, 200)
 	var st queue.Stats
 	if err := json.Unmarshal(w.Body.Bytes(), &st); err != nil {
@@ -207,30 +195,26 @@ func TestStatsAndPrometheusMetricsReflectJobStates(t *testing.T) {
 	if st.Queued != 1 || st.Canceled != 1 {
 		t.Fatalf("stats: %+v", st)
 	}
-	w = request(h, "GET", "/metrics", "", "", true)
-	expect(t, w, 200)
-	if !strings.Contains(w.Body.String(), `runner_jobs{status="queued"} 1`) || !strings.Contains(w.Body.String(), `runner_jobs{status="canceled"} 1`) {
-		t.Fatalf("metrics: %s", w.Body)
-	}
+
 }
 
 func TestRouteRegistrationAndStaticAssetsWithoutDatabase(t *testing.T) {
-	api := httpapi.Server{Store: queue.New(nil), Token: token}
+	api := httpapi.Server{Store: queue.New(nil)}
 	h, err := api.Handler(fstest.MapFS{"index.html": {Data: []byte("Job Runner")}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	expect(t, request(h, "GET", "/", "", "", false), 200)
-	expect(t, request(h, "GET", "/healthz", "", "", false), 200)
-	expect(t, request(h, "GET", "/api/jobs", "", "", false), 401)
-	expect(t, request(h, "POST", "/", "", "", false), 405)
+	expect(t, request(h, "GET", "/", "", ""), 200)
+	expect(t, request(h, "GET", "/healthz", "", ""), 200)
+
+	expect(t, request(h, "POST", "/", "", ""), 405)
 }
 
 func TestTextPayloadBoundariesAndEscaping(t *testing.T) {
 	_, h := setup(t)
 	for _, value := range []string{strings.Repeat("a", 12000), strings.Repeat("<>&", 3000), strings.Repeat("한", 4000)} {
 		j := submitted(t, h, `{"kind":"checksum","payload":{"text":"`+value+`"}}`)
-		w := request(h, "GET", "/api/jobs/"+j.ID, "", "", true)
+		w := request(h, "GET", "/api/jobs/"+j.ID, "", "")
 		expect(t, w, 200)
 		var got queue.Detail
 		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -250,6 +234,6 @@ func TestTextPayloadBoundariesAndEscaping(t *testing.T) {
 		`{"kind":"checksum","payload":{"text":"` + strings.Repeat("a", 12001) + `"}}`,
 		`{"kind":"checksum","payload":{"text":"\u0000"}}`,
 	} {
-		expect(t, request(h, "POST", "/api/jobs", body, "", true), 400)
+		expect(t, request(h, "POST", "/api/jobs", body, ""), 400)
 	}
 }
