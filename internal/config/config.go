@@ -41,7 +41,7 @@ func Load(mode string) (Config, error) {
 		if c.WorkerID == "" {
 			c.WorkerID = queue.NewID()
 		}
-		c.Queues = strings.Split(env("QUEUES", "default,reports"), ",")
+		c.Queues = strings.Split(env("QUEUES", "default"), ",")
 	default:
 		return c, errors.New("unknown command")
 	}

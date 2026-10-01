@@ -26,11 +26,13 @@ func setup(t *testing.T) (*queue.Store, http.Handler) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	expect(t, request(h, "POST", "/api/demo", `{"action":"claim"}`, ""), 200)
 	return s, h
 }
 func request(h http.Handler, method, path, body, key string) *httptest.ResponseRecorder {
 	r := httptest.NewRequest(method, path, strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+	r.AddCookie(&http.Cookie{Name: "demo_session", Value: "11111111-1111-4111-8111-111111111111"})
 	if key != "" {
 		r.Header.Set("Idempotency-Key", key)
 	}
@@ -68,7 +70,7 @@ func TestConsoleAndAPIWorkWithoutCredentials(t *testing.T) {
 
 func TestAPISubmissionReplayConflictAndDetail(t *testing.T) {
 	_, h := setup(t)
-	body := `{"kind":"checksum","payload":{"text":"abc"}}`
+	body := `{"kind":"demo","payload":{"work_ms":1}}`
 	first := request(h, "POST", "/api/jobs", body, "same-request")
 	expect(t, first, 201)
 	var j queue.Job
@@ -110,8 +112,8 @@ func TestInvalidTaskValuesDoNotEnterTheQueue(t *testing.T) {
 	if err != nil || stats.Queued != 0 {
 		t.Fatalf("invalid input entered the queue: %+v %v", stats, err)
 	}
-	submitted(t, h, `{"kind":"statistics","payload":{"values":[0,10]}}`)
-	submitted(t, h, `{"kind":"checksum","payload":{"text":""}}`)
+	submitted(t, h, `{"kind":"demo","payload":{"work_ms":0}}`)
+	submitted(t, h, `{"kind":"demo","payload":{"fail_until":1}}`)
 }
 
 func TestAPIRejectsInvalidAndOversizedRequests(t *testing.T) {
@@ -124,6 +126,7 @@ func TestAPIRejectsInvalidAndOversizedRequests(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(`{}`))
 
 	r.Header.Set("Content-Type", "text/plain")
+	r.AddCookie(&http.Cookie{Name: "demo_session", Value: "11111111-1111-4111-8111-111111111111"})
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	expect(t, w, 415)
@@ -136,10 +139,10 @@ func TestAPIRejectsInvalidAndOversizedRequests(t *testing.T) {
 func TestAPIListFiltersPaginationAndBadQueries(t *testing.T) {
 	_, h := setup(t)
 	for range 3 {
-		submitted(t, h, `{"kind":"demo","payload":{},"queue":"reports","delay_seconds":60}`)
+		submitted(t, h, `{"kind":"demo","payload":{},"delay_seconds":60}`)
 	}
 	submitted(t, h, `{"kind":"demo","payload":{}}`)
-	w := request(h, "GET", "/api/jobs?queue=reports&status=queued&limit=2", "", "")
+	w := request(h, "GET", "/api/jobs?status=queued&limit=2", "", "")
 	expect(t, w, 200)
 	var p queue.Page
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
@@ -148,12 +151,12 @@ func TestAPIListFiltersPaginationAndBadQueries(t *testing.T) {
 	if len(p.Jobs) != 2 || p.NextCursor == 0 {
 		t.Fatalf("page: %+v", p)
 	}
-	w = request(h, "GET", fmt.Sprintf("/api/jobs?queue=reports&limit=2&before=%d", p.NextCursor), "", "")
+	w = request(h, "GET", fmt.Sprintf("/api/jobs?status=queued&limit=2&before=%d", p.NextCursor), "", "")
 	expect(t, w, 200)
 	if err := json.Unmarshal(w.Body.Bytes(), &p); err != nil {
 		t.Fatal(err)
 	}
-	if len(p.Jobs) != 1 {
+	if len(p.Jobs) != 2 {
 		t.Fatalf("next page: %+v", p)
 	}
 	for _, query := range []string{"limit=0", "limit=101", "limit=abc", "before=-1", "before=abc", "status=unknown", "queue=../bad"} {
@@ -208,32 +211,4 @@ func TestRouteRegistrationAndStaticAssetsWithoutDatabase(t *testing.T) {
 	expect(t, request(h, "GET", "/healthz", "", ""), 200)
 
 	expect(t, request(h, "POST", "/", "", ""), 405)
-}
-
-func TestTextPayloadBoundariesAndEscaping(t *testing.T) {
-	_, h := setup(t)
-	for _, value := range []string{strings.Repeat("a", 12000), strings.Repeat("<>&", 3000), strings.Repeat("한", 4000)} {
-		j := submitted(t, h, `{"kind":"checksum","payload":{"text":"`+value+`"}}`)
-		w := request(h, "GET", "/api/jobs/"+j.ID, "", "")
-		expect(t, w, 200)
-		var got queue.Detail
-		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
-			t.Fatal(err)
-		}
-		var payload struct {
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal(got.Payload, &payload); err != nil {
-			t.Fatal(err)
-		}
-		if payload.Text != value {
-			t.Fatal("stored text changed during normalization")
-		}
-	}
-	for _, body := range []string{
-		`{"kind":"checksum","payload":{"text":"` + strings.Repeat("a", 12001) + `"}}`,
-		`{"kind":"checksum","payload":{"text":"\u0000"}}`,
-	} {
-		expect(t, request(h, "POST", "/api/jobs", body, ""), 400)
-	}
 }

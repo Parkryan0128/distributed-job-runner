@@ -10,34 +10,6 @@ import (
 	"github.com/Parkryan0128/distributed-job-runner/internal/task"
 )
 
-func TestChecksumAndStatisticsResults(t *testing.T) {
-	result, err := task.Run(context.Background(), queue.Job{Kind: "checksum", Payload: json.RawMessage(`{"text":"abc"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var hash struct {
-		SHA256 string `json:"sha256"`
-		Bytes  int    `json:"bytes"`
-	}
-	if err = json.Unmarshal(result, &hash); err != nil {
-		t.Fatal(err)
-	}
-	if hash.SHA256 != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" || hash.Bytes != 3 {
-		t.Fatalf("checksum: %s", result)
-	}
-	result, err = task.Run(context.Background(), queue.Job{Kind: "statistics", Payload: json.RawMessage(`{"values":[-2,4,7]}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stats map[string]float64
-	if err = json.Unmarshal(result, &stats); err != nil {
-		t.Fatal(err)
-	}
-	if stats["sum"] != 9 || stats["mean"] != 3 || stats["min"] != -2 || stats["max"] != 7 || stats["count"] != 3 {
-		t.Fatalf("statistics: %s", result)
-	}
-}
-
 func TestTaskPayloadValidation(t *testing.T) {
 	for _, c := range []struct{ kind, payload string }{
 		{"shell", `{}`}, {"demo", `{"work_ms":120001}`}, {"demo", `{"fail_until":-1}`}, {"demo", `{"unknown":1}`},

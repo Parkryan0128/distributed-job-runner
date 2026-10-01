@@ -1,15 +1,33 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 
 const base = process.env.BASE_URL || "http://127.0.0.1:8080";
+let cookie;
+before(async () => {
+  const r = await fetch(`${base}/api/demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "claim" }),
+  });
+  cookie = r.headers.get("set-cookie").split(";")[0];
+  assert.equal(r.status, 200);
+});
+after(async () => {
+  await fetch(`${base}/api/demo`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ action: "stop" }),
+  });
+});
 
 async function api(path, body) {
   const response = await fetch(`${base}${path}`, {
     method: body ? "POST" : "GET",
     headers: {
       "Content-Type": "application/json",
+      Cookie: cookie,
     },
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(5000),
@@ -39,27 +57,18 @@ function compose(...args) {
   });
 }
 
-test("statistics run on the reports queue and preserve zero values", async () => {
-  const invalid = await fetch(`${base}/api/jobs`, {
+test("only demo jobs enter the shared queue", async () => {
+  const response = await fetch(`${base}/api/jobs`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      kind: "statistics",
-      payload: { values: [null, 10] },
-    }),
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ kind: "checksum", payload: { text: "abc" } }),
   });
-  assert.equal(invalid.status, 400);
-  const created = await api("/api/jobs", {
-    kind: "statistics",
-    queue: "reports",
-    payload: { values: [-2, 0, 8] },
-  });
-  const done = await until(created.id, (job) => job.status === "succeeded");
-  assert.equal(done.queue, "reports");
-  assert.equal(done.attempt, 1);
-  assert.deepEqual(done.result, { count: 3, sum: 6, mean: 2, min: -2, max: 8 });
+  assert.equal(response.status, 400);
+  const job = await api("/api/jobs", { kind: "demo", payload: { work_ms: 0 } });
+  assert.equal(
+    (await until(job.id, (j) => j.status === "succeeded")).attempt,
+    1,
+  );
 });
 
 test(
@@ -111,6 +120,9 @@ test(
         created.id,
         (j) => j.status === "succeeded",
       );
+      const workers = await api("/api/workers");
+      assert.equal(workers.find((w) => w.id === owner).online, false);
+      assert.equal(workers.find((w) => w.id !== owner).online, true);
       assert.equal(recovered.attempt, 2);
       assert.equal(recovered.attempts[0].status, "expired");
       assert.equal(recovered.attempts[1].status, "succeeded");
@@ -131,8 +143,8 @@ test(
   { timeout: 45000 },
   async () => {
     const created = await api("/api/jobs", {
-      kind: "checksum",
-      payload: { text: "abc" },
+      kind: "demo",
+      payload: { work_ms: 0 },
     });
     const finished = await until(created.id, (j) => j.status === "succeeded");
     compose("restart", "api");
@@ -151,6 +163,7 @@ test(
       await delay(200);
     }
     assert.ok(ready, "API did not become ready after restart");
+    await api("/api/demo", { action: "claim" });
     const restored = await api(`/api/jobs/${created.id}`);
     assert.deepEqual(restored, finished);
   },
