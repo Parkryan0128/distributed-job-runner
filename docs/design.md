@@ -14,7 +14,7 @@ Canceling a running job immediately fences its result. The handler receives canc
 
 The demo opens directly without accounts or API keys. Docker publishes it on localhost, and the standalone API also listens on loopback by default. Payloads and response data are rendered as text. Only the demo task is accepted; API submissions use the default shared queue.
 
-Job-state transitions append to `job_events` in the same transaction as the state change. A transaction advisory lock serializes event ID allocation through commit, preventing a committed later ID from overtaking an earlier uncommitted event. A single API reader drains this log every 100 ms and fans events out over SSE; viewers do not independently poll the database for activity. This retains transitions of zero-duration jobs instead of sampling current state. Events are pruned after ten minutes; jobs and attempt history remain.
+Job-state transitions append to `job_events` in the same transaction as the state change. A transaction advisory lock serializes event ID allocation through commit, preventing a committed later ID from overtaking an earlier uncommitted event. A single API reader drains this log every 100 ms and fans events out over SSE; viewers do not independently poll the database for activity. This retains transitions of zero-duration jobs instead of sampling current state. Events are pruned after ten minutes. Production also deletes terminal jobs and their attempts after 24 hours, in batches of up to 500 each minute. Local history cleanup is disabled by default. After history cleanup, observers reconnect to a fresh snapshot so counts and the table stay consistent.
 
 An SSE connection subscribes before taking a repeatable-read snapshot containing counts, active jobs, worker capacity, and a cursor. Buffered events at or below that cursor are discarded. A lost/slow connection reconnects with a fresh snapshot rather than promising replay of every animation during the disconnection. Subscriber queues and write deadlines are bounded. The SSE handler bypasses the normal five-second request deadline, and updates its own write deadline for each message.
 
@@ -24,6 +24,6 @@ Cursor pagination uses the insertion sequence so new jobs do not shift an older 
 
 ## Scope
 
-There is no cron scheduler, workflow DAG, global rate limiter, or automatic dead-letter replay. A failed job stays available for inspection; submit a new job to run it again. History and idempotency keys are retained with the job, with no automatic cleanup policy. The dashboard counts show current persisted state. There are concurrency and failure tests, but no throughput claim or production load benchmark.
+There is no cron scheduler, workflow DAG, or automatic dead-letter replay. A dead job stays available for inspection until history cleanup; submit a new job to run it again. Idempotency keys expire with their jobs. Manual submissions share an in-process token bucket and a database-checked active-job limit; this is not a distributed rate limiter. The dashboard counts show current persisted state. There are concurrency and failure tests, but no throughput claim or production load benchmark.
 
 The schema setup is an idempotent initial migration guarded by a transaction advisory lock. Future schema changes need versioned migrations rather than edits to `CREATE TABLE IF NOT EXISTS`.
