@@ -3,62 +3,99 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#f5f6f3" />
+    <meta name="theme-color" content="#f4f4f5" />
     <title>Job Runner</title>
-    <link rel="icon" href="/favicon.svg" />
     <link rel="stylesheet" href="/style.css" />
     <script src="/app.js" defer></script>
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="/" aria-label="Job Runner home"
-        ><span class="brand-mark">↗</span> Job Runner
-        <span class="brand-sub">/ console</span></a
-      >
-      <div class="top-actions">
-        <span id="connection" class="connection">Connecting…</span>
-      </div>
-    </header>
     <main id="console">
       <section class="page-heading">
         <div>
-          <p class="eyebrow">JOB QUEUE</p>
-          <h1>Execution overview</h1>
-          <p class="muted">Queue status and recent executions.</p>
+          <h1>Queue monitor</h1>
+          <p id="worker-summary" class="muted">Discovering workers…</p>
         </div>
         <button id="new-job" class="primary">+ New job</button>
       </section>
-      <p id="notice" class="notice" role="status" aria-live="polite"></p>
       <p id="error" class="error" role="alert"></p>
       <p id="action-error" class="error" role="alert"></p>
       <section class="stats" aria-label="Job counts">
         <button class="stat" data-status="queued">
           <span>Queued</span><strong id="count-queued">0</strong
-          ><small>Waiting for a worker</small>
+          ><small>Waiting for a slot</small>
         </button>
         <button class="stat" data-status="running">
           <span><i class="dot"></i> Running</span
           ><strong id="count-running">0</strong
-          ><small>Currently in progress</small>
+          ><small id="slot-summary">Discovering capacity…</small>
         </button>
         <button class="stat" data-status="succeeded">
           <span>Succeeded</span><strong id="count-succeeded">0</strong
-          ><small>Completed successfully</small>
+          ><small>Completed</small>
         </button>
         <button class="stat" data-status="dead">
           <span>Dead letter</span><strong id="count-dead">0</strong
-          ><small>No more automatic retries</small>
+          ><small>Retries exhausted</small>
         </button>
         <button class="stat" data-status="canceled">
           <span>Canceled</span><strong id="count-canceled">0</strong
           ><small>Stopped by request</small>
         </button>
       </section>
+      <section class="workload panel" aria-label="Workload controls">
+        <div class="workload-bar">
+          <h2>Workload</h2>
+          <div class="segment" aria-label="Workload level">
+            <button data-level="low" aria-pressed="true">Low</button
+            ><button data-level="medium" aria-pressed="false">Medium</button
+            ><button data-level="high" aria-pressed="false">High</button>
+          </div>
+          <div class="run-tools">
+            <span id="workload-state" role="status">Connecting…</span
+            ><button id="toggle-workload" disabled>Start</button
+            ><button id="release-control" hidden>Release</button>
+          </div>
+        </div>
+        <div class="load-body">
+          <div class="load-meta">
+            <dl>
+              <div>
+                <dt>Arrival rate</dt>
+                <dd id="arrival-rate">0.3 jobs/s</dd>
+              </div>
+              <div>
+                <dt>Avg. task time</dt>
+                <dd>2.0 s</dd>
+              </div>
+              <div>
+                <dt>Retry scenario</dt>
+                <dd id="retry-rate">5% of jobs</dd>
+              </div>
+            </dl>
+            <p id="workload-note">
+              A steady trickle of work. Most slots remain available.
+            </p>
+          </div>
+          <div class="execution" aria-label="Current job activity">
+            <div class="activity-heading">
+              <h3>Shared queue <span id="pending-count"></span></h3>
+              <span id="connection" hidden>Connecting…</span>
+            </div>
+            <div id="pending-jobs" class="job-blocks">
+              <p class="muted">Loading queued jobs…</p>
+            </div>
+            <p id="pending-note" class="activity-note"></p>
+            <div id="workers">
+              <p class="muted">Waiting for worker heartbeats…</p>
+            </div>
+          </div>
+        </div>
+        <p id="workload-error" class="error" role="alert"></p>
+      </section>
       <section class="workspace">
         <div class="panel job-panel">
           <div class="panel-heading">
             <h2>Jobs</h2>
-            <span class="muted small">Refreshes every 1.5s</span>
           </div>
           <div class="filters">
             <div class="select-field">
@@ -72,31 +109,22 @@
                 <option value="canceled">Canceled</option>
               </select>
             </div>
-            <div class="select-field">
-              <label for="queue-filter">Queue</label
-              ><select id="queue-filter">
-                <option value="">All queues</option>
-                <option value="default">default</option>
-                <option value="reports">reports</option>
-              </select>
-            </div>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>Job / kind</th>
+                  <th>Job ID</th>
                   <th>Status</th>
-                  <th>Queue</th>
                   <th>Attempt</th>
                   <th>Created</th>
+                  <th>Worker</th>
                 </tr>
               </thead>
               <tbody id="jobs"></tbody>
             </table>
           </div>
           <div id="empty" class="empty" hidden>
-            <span class="empty-icon">↗</span>
             <h3>No jobs here yet</h3>
             <p>Submit a job or change the filters.</p>
           </div>
@@ -110,25 +138,17 @@
         </div>
         <aside class="panel detail-panel" aria-label="Job details">
           <div class="panel-heading">
-            <h2>Job details</h2>
+            <h2>Inspector</h2>
             <span id="detail-status"></span>
           </div>
           <div id="detail-empty" class="empty">
-            <span class="empty-icon">⌁</span>
             <h3>Follow an execution</h3>
-            <p>
-              Select a job to inspect its payload, result, and attempt history.
-            </p>
+            <p>Select a job to inspect its result and attempt history.</p>
           </div>
           <div id="detail" hidden>
             <div class="detail-summary">
-              <p id="detail-kind" class="eyebrow"></p>
               <code id="detail-id" data-testid="job-id"></code>
               <dl>
-                <div>
-                  <dt>Queue</dt>
-                  <dd id="detail-queue"></dd>
-                </div>
                 <div>
                   <dt>Attempts</dt>
                   <dd id="detail-attempts"></dd>
@@ -151,10 +171,6 @@
                 No worker has claimed this job.
               </p>
             </div>
-            <div class="detail-section">
-              <h3>Payload</h3>
-              <pre id="payload"></pre>
-            </div>
             <div id="result-section" class="detail-section" hidden>
               <h3>Result</h3>
               <pre id="result"></pre>
@@ -166,13 +182,11 @@
           </div>
         </aside>
       </section>
-      <footer>Go + PostgreSQL</footer>
     </main>
     <dialog id="composer">
       <form id="job-form">
         <div class="dialog-heading">
           <div>
-            <p class="eyebrow">ADD TO QUEUE</p>
             <h2>New job</h2>
           </div>
           <button
@@ -181,43 +195,51 @@
             class="quiet"
             aria-label="Close new job"
           >
-            ✕
+            Close
           </button>
         </div>
-        <p class="muted">Choose a task or try a failure scenario.</p>
+        <p class="muted">TEST SCENARIO</p>
         <div class="presets">
-          <button type="button" data-preset="success">Quick success</button
-          ><button type="button" data-preset="retry">Retry twice</button
-          ><button type="button" data-preset="dead">Exhaust retries</button
-          ><button type="button" data-preset="long">Long job</button>
+          <button
+            type="button"
+            data-preset="success"
+            aria-label="Quick success"
+          >
+            Quick success<small>Complete in 1 second</small></button
+          ><button type="button" data-preset="retry" aria-label="Retry twice">
+            Retry twice<small>Fail → retry → succeed</small></button
+          ><button
+            type="button"
+            data-preset="dead"
+            aria-label="Exhaust retries"
+          >
+            Exhaust retries<small>Reach the attempt limit</small></button
+          ><button type="button" data-preset="long" aria-label="Long job">
+            Long job<small>20 seconds · test cancellation</small>
+          </button>
         </div>
-        <div class="form-grid">
-          <div class="select-field">
-            <label for="kind">Task</label
-            ><select id="kind" name="kind">
-              <option value="demo">Demo task</option>
-              <option value="checksum">SHA-256 checksum</option>
-              <option value="statistics">Statistics</option>
-            </select>
-          </div>
-          <div class="select-field">
-            <label for="queue">Queue</label
-            ><select id="queue" name="queue">
-              <option value="default">default</option>
-              <option value="reports">reports</option>
-            </select>
-          </div>
+        <h3 class="custom-task-heading">Custom task</h3>
+        <div class="form-grid task-fields" data-task-fields="demo">
+          <label
+            >Task time (s)<input
+              id="task-time"
+              type="number"
+              min="0"
+              max="120"
+              step="0.1"
+              value="1.5"
+              required
+          /></label>
+          <label
+            >Fail first attempts<input
+              id="fail-until"
+              type="number"
+              min="0"
+              max="10"
+              value="0"
+              required
+          /></label>
         </div>
-        <label for="job-payload">Payload</label
-        ><textarea
-          id="job-payload"
-          name="payload"
-          rows="5"
-          spellcheck="false"
-          required
-        >
-{"work_ms": 1500, "fail_until": 0}</textarea
-        >
         <div class="form-grid options">
           <label
             >Priority<input
@@ -257,7 +279,7 @@
         <div class="dialog-footer">
           <span class="muted small">Priority 9 runs before priority 0.</span
           ><button id="submit-job" class="primary" type="submit">
-            Submit job ↗
+            Submit job
           </button>
         </div>
       </form>
