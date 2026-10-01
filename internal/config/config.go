@@ -26,17 +26,29 @@ type Config struct {
 func Load(mode string) (Config, error) {
 	c := Config{
 		DatabaseURL: os.Getenv("DATABASE_URL"),
-		Token:       os.Getenv("API_TOKEN"),
-		Address:     env("LISTEN_ADDR", ":8080"),
-		WebDir:      env("WEB_DIR", "web"),
-		WorkerID:    env("WORKER_ID", queue.NewID()),
-		Queues:      strings.Split(env("QUEUES", "default,reports"), ","),
 	}
 	if c.DatabaseURL == "" {
 		return c, errors.New("DATABASE_URL is required")
 	}
-	if mode == "api" && len(c.Token) < 16 {
-		return c, errors.New("API_TOKEN must contain at least 16 bytes")
+	switch mode {
+	case "migrate":
+		return c, nil
+	case "api":
+		c.Token = os.Getenv("API_TOKEN")
+		c.Address = env("LISTEN_ADDR", ":8080")
+		c.WebDir = env("WEB_DIR", "web")
+		if len(c.Token) < 16 {
+			return c, errors.New("API_TOKEN must contain at least 16 bytes")
+		}
+		return c, nil
+	case "worker":
+		c.WorkerID = os.Getenv("WORKER_ID")
+		if c.WorkerID == "" {
+			c.WorkerID = queue.NewID()
+		}
+		c.Queues = strings.Split(env("QUEUES", "default,reports"), ",")
+	default:
+		return c, errors.New("unknown command")
 	}
 	var err error
 	c.Concurrency, err = integer("CONCURRENCY", 2, 1, 32)

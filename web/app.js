@@ -276,6 +276,7 @@ function disconnect() {
   $("#detail-empty").hidden = false;
   $("#detail-status").replaceChildren();
   $("#notice").textContent = "";
+  $("#action-error").textContent = "";
   $("#token").focus();
 }
 
@@ -384,6 +385,7 @@ $("#cancel-job").addEventListener("click", async () => {
   if (!id || state.canceling) return;
   const session = state.session;
   state.canceling = true;
+  $("#action-error").textContent = "";
   $("#cancel-job").disabled = true;
   try {
     await api(`/api/jobs/${id}/cancel`, { method: "POST" });
@@ -391,7 +393,7 @@ $("#cancel-job").addEventListener("click", async () => {
     $("#notice").textContent = `Job ${id.slice(0, 8)} canceled.`;
   } catch (error) {
     if (session !== state.session) return;
-    $("#error").textContent = error.message;
+    $("#action-error").textContent = error.message;
   } finally {
     if (session === state.session) {
       state.canceling = false;

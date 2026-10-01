@@ -94,6 +94,31 @@ test("checksum task displays its actual result and rejects malformed JSON", asyn
   );
 });
 
+test("a failed cancellation stays visible after polling and can be retried", async ({
+  page,
+}) => {
+  await login(page);
+  await submit(page, "Long job");
+  await expect(page.locator("#detail-status")).toHaveText("Running");
+  await page.route("**/cancel", (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: '{"error":"service temporarily unavailable"}',
+    }),
+  );
+  await page.getByRole("button", { name: "Cancel job" }).click();
+  await expect(page.getByRole("button", { name: "Cancel job" })).toBeEnabled();
+  await expect(page.locator("#connection")).toHaveText("Live");
+  await expect(page.locator("#action-error")).toHaveText(
+    "service temporarily unavailable",
+  );
+  await page.unroute("**/cancel");
+  await page.getByRole("button", { name: "Cancel job" }).click();
+  await expect(page.locator("#detail-status")).toHaveText("Canceled");
+  await expect(page.locator("#action-error")).toBeEmpty();
+});
+
 test("retrying a lost submission response reuses the same job", async ({
   page,
 }) => {

@@ -199,3 +199,18 @@ func TestWorkerRecoversJobLeftByCrashedProcess(t *testing.T) {
 		t.Fatalf("recovery: %+v", got)
 	}
 }
+
+func TestInvalidStoredPayloadFailsWithoutRetry(t *testing.T) {
+	s, _ := testdb.New(t)
+	jobs := []queue.Job{
+		submit(t, s, "statistics", `{"values":[null,10]}`, 3, 30),
+		submit(t, s, "checksum", `{"text":null}`, 3, 30),
+	}
+	start(t, s, "worker", nil)
+	for _, j := range jobs {
+		got := await(t, s, j.ID, "dead")
+		if got.Attempt != 1 || got.Result != nil || got.Error == "" || len(got.Attempts) != 1 || got.Attempts[0].Status != "failed" {
+			t.Fatalf("invalid payload was executed or retried: %+v", got)
+		}
+	}
+}

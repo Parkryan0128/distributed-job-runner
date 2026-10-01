@@ -41,6 +41,30 @@ function compose(...args) {
   });
 }
 
+test("statistics run on the reports queue and preserve zero values", async () => {
+  const invalid = await fetch(`${base}/api/jobs`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      kind: "statistics",
+      payload: { values: [null, 10] },
+    }),
+  });
+  assert.equal(invalid.status, 400);
+  const created = await api("/api/jobs", {
+    kind: "statistics",
+    queue: "reports",
+    payload: { values: [-2, 0, 8] },
+  });
+  const done = await until(created.id, (job) => job.status === "succeeded");
+  assert.equal(done.queue, "reports");
+  assert.equal(done.attempt, 1);
+  assert.deepEqual(done.result, { count: 3, sum: 6, mean: 2, min: -2, max: 8 });
+});
+
 test(
   "two worker processes share a batch without duplicate attempts",
   { timeout: 45000 },
@@ -100,7 +124,7 @@ test(
         ["update", "--restart=unless-stopped", container],
         { timeout: 10000 },
       );
-      compose("start", owner);
+      execFileSync("docker", ["start", container], { timeout: 20000 });
     }
   },
 );
