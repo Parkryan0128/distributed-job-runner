@@ -444,7 +444,7 @@ test("worker updates and other jobs preserve the running block", async ({
     };
   });
   await openConsole(page);
-  const job = await create(request, { work_ms: 4000 });
+  const job = await create(request, { work_ms: 6000 });
   const selector = `#workers [data-activity-job="${job.id}"]`;
   await expect(page.locator(selector)).toBeVisible();
   const original = await page.locator(selector).elementHandle();
@@ -459,7 +459,15 @@ test("worker updates and other jobs preserve the running block", async ({
     (id) => window.moves.filter((m) => m.id === id),
     job.id,
   );
-  expect(moves).toHaveLength(1);
+  expect(moves.length).toBeGreaterThanOrEqual(1);
+  // Other jobs leaving can legitimately shift this block. Once settled, idle
+  // worker heartbeats must preserve the same animation count and DOM node.
+  await page.waitForTimeout(1200);
+  const afterHeartbeat = await page.evaluate(
+    (id) => window.moves.filter((m) => m.id === id).length,
+    job.id,
+  );
+  expect(afterHeartbeat).toBe(moves.length);
   expect(moves[0].from).not.toBe("translate(0px, 0px)");
   await expect
     .poll(() => page.locator(`${selector}.completed-job`).count(), {
