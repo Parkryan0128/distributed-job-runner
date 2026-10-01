@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 CREATE INDEX IF NOT EXISTS jobs_ready ON jobs (queue, priority DESC, available_at, sequence) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS jobs_expired ON jobs (lease_until) WHERE status = 'running';
+CREATE INDEX IF NOT EXISTS jobs_terminal_age ON jobs(updated_at) WHERE status IN ('succeeded','dead','canceled');
 CREATE TABLE IF NOT EXISTS attempts (
     job_id uuid NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     number integer NOT NULL,

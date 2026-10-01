@@ -71,6 +71,8 @@ func run() error {
 		return w.Run(ctx)
 	}
 	demo := httpapi.NewDemo(store)
+	demo.SecureCookies = cfg.SecureCookies
+	demo.HistoryRetention = cfg.HistoryRetention
 	go demo.Run(ctx)
 	select {
 	case <-demo.Ready:

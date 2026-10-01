@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"github.com/jackc/pgx/v5"
+	"time"
 )
 
 type Event struct {
@@ -89,4 +90,15 @@ func (s *Store) Events(ctx context.Context, after int64) ([]Event, error) {
 func (s *Store) PruneEvents(ctx context.Context) error {
 	_, err := s.pool.Exec(ctx, `DELETE FROM job_events WHERE created_at<clock_timestamp()-interval '10 minutes'`)
 	return err
+}
+
+// Delete only old terminal demo history, in bounded batches. Attempts cascade.
+func (s *Store) PruneHistory(ctx context.Context, retention time.Duration) (int64, error) {
+	if retention <= 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM jobs WHERE id IN (SELECT id FROM jobs
+ WHERE status IN ('succeeded','dead','canceled') AND updated_at < clock_timestamp()-make_interval(secs=>$1)
+ ORDER BY updated_at LIMIT 500)`, retention.Seconds())
+	return tag.RowsAffected(), err
 }

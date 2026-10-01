@@ -21,17 +21,21 @@ type message struct {
 // Demo owns the one public demo controller and broadcasts database events.
 // Run one API instance; workers remain independent processes.
 type Demo struct {
-	store       *queue.Store
-	Ready       chan struct{}
-	mu          sync.Mutex
-	owner       string
-	expires     time.Time
-	level       string
-	running     bool
-	next        time.Time
-	sent        int
-	Duration    time.Duration
-	subscribers map[chan message]struct{}
+	store            *queue.Store
+	Ready            chan struct{}
+	mu               sync.Mutex
+	owner            string
+	expires          time.Time
+	level            string
+	running          bool
+	next             time.Time
+	sent             int
+	Duration         time.Duration
+	SecureCookies    bool
+	HistoryRetention time.Duration
+	submitTokens     float64
+	tokensUpdated    time.Time
+	subscribers      map[chan message]struct{}
 }
 type demoView struct {
 	Available   bool   `json:"available"`
@@ -42,7 +46,7 @@ type demoView struct {
 }
 
 func NewDemo(store *queue.Store) *Demo {
-	return &Demo{store: store, Ready: make(chan struct{}), level: "low", Duration: 30 * time.Second, subscribers: make(map[chan message]struct{})}
+	return &Demo{store: store, Ready: make(chan struct{}), level: "low", Duration: 30 * time.Second, submitTokens: 20, tokensUpdated: time.Now(), subscribers: make(map[chan message]struct{})}
 }
 func (d *Demo) expire() {
 	if d.owner != "" && !time.Now().Before(d.expires) {
@@ -56,12 +60,12 @@ func (d *Demo) view(session string) demoView {
 	d.expire()
 	return demoView{d.owner == "", d.owner != "" && d.owner == session, d.running, d.level, max(0, time.Until(d.expires).Milliseconds())}
 }
-func session(w http.ResponseWriter, r *http.Request) string {
+func (d *Demo) session(w http.ResponseWriter, r *http.Request) string {
 	if c, err := r.Cookie("demo_session"); err == nil && queue.ValidID(c.Value) {
 		return c.Value
 	}
 	id := queue.NewID()
-	http.SetCookie(w, &http.Cookie{Name: "demo_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: 86400})
+	http.SetCookie(w, &http.Cookie{Name: "demo_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: d.SecureCookies || r.TLS != nil, MaxAge: 86400})
 	return id
 }
 func (d *Demo) broadcast(m message) { d.mu.Lock(); defer d.mu.Unlock(); d.broadcastLocked(m) }
@@ -76,7 +80,7 @@ func (d *Demo) broadcastLocked(m message) {
 	}
 }
 func (d *Demo) control(w http.ResponseWriter, r *http.Request) {
-	who := session(w, r)
+	who := d.session(w, r)
 	if r.Method == "GET" {
 		write(w, 200, d.view(who))
 		return
@@ -133,7 +137,7 @@ func (d *Demo) control(w http.ResponseWriter, r *http.Request) {
 }
 func (d *Demo) authorize(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		who := session(w, r)
+		who := d.session(w, r)
 		d.mu.Lock()
 		defer d.mu.Unlock()
 		d.expire()
@@ -226,6 +230,10 @@ func (d *Demo) Run(ctx context.Context) {
 			}
 			if time.Since(lastPrune) >= time.Minute {
 				_ = d.store.PruneEvents(op)
+				if n, err := d.store.PruneHistory(op, d.HistoryRetention); err == nil && n > 0 {
+					// Counts/history changed without a job transition; reconnect to a fresh snapshot.
+					d.broadcast(message{kind: "reset"})
+				}
 				lastPrune = time.Now()
 			}
 			cancel()
@@ -233,7 +241,7 @@ func (d *Demo) Run(ctx context.Context) {
 	}
 }
 func (d *Demo) stream(w http.ResponseWriter, r *http.Request) {
-	who := session(w, r)
+	who := d.session(w, r)
 	ch := make(chan message, 64)
 	d.mu.Lock()
 	if len(d.subscribers) >= 200 {
@@ -291,6 +299,10 @@ func (d *Demo) stream(w http.ResponseWriter, r *http.Request) {
 			if !ok || m.kind == "unavailable" {
 				return
 			}
+			if m.kind == "reset" {
+				_ = send("reset", 0, struct{}{})
+				return
+			}
 			if m.id > 0 && m.id <= snap.Cursor {
 				continue
 			}
@@ -313,5 +325,17 @@ func sameOrigin(w http.ResponseWriter, r *http.Request) bool {
 		writeError(w, 403, "Cross-site changes are not allowed.")
 		return false
 	}
+	return true
+}
+
+// Called under the controller mutex. A global burst survives ownership changes.
+func (d *Demo) allowSubmit() bool {
+	now := time.Now()
+	d.submitTokens = min(20, d.submitTokens+now.Sub(d.tokensUpdated).Seconds()*5)
+	d.tokensUpdated = now
+	if d.submitTokens < 1 {
+		return false
+	}
+	d.submitTokens--
 	return true
 }

@@ -162,3 +162,33 @@ func TestServerGeneratorDoesNotDependOnBrowser(t *testing.T) {
 		t.Fatal("generator continued after expiration")
 	}
 }
+
+func TestPublicSubmissionLimitAndSecureCookie(t *testing.T) {
+	s, _ := testdb.New(t)
+	d := httpapi.NewDemo(s)
+	d.SecureCookies = true
+	api := httpapi.Server{Store: s, Demo: d}
+	h, _ := api.Handler(nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/api/demo", nil))
+	cookies := w.Result().Cookies()
+	if len(cookies) != 1 || !cookies[0].Secure || !cookies[0].HttpOnly {
+		t.Fatal("missing secure session cookie")
+	}
+	owner := queue.NewID()
+	asVisitor(h, owner, "POST", "/api/demo", `{"action":"claim"}`)
+	limited := false
+	for range 50 {
+		r := asVisitor(h, owner, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`)
+		if r.Code == 429 {
+			limited = true
+			break
+		}
+		if r.Code != 201 {
+			t.Fatal(r.Body.String())
+		}
+	}
+	if !limited {
+		t.Fatal("burst was not limited")
+	}
+}

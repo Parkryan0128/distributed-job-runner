@@ -12,14 +12,16 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	Address     string
-	WebDir      string
-	WorkerID    string
-	Queues      []string
-	Concurrency int
-	Lease       time.Duration
-	Poll        time.Duration
+	DatabaseURL      string
+	Address          string
+	WebDir           string
+	WorkerID         string
+	Queues           []string
+	Concurrency      int
+	Lease            time.Duration
+	Poll             time.Duration
+	SecureCookies    bool
+	HistoryRetention time.Duration
 }
 
 func Load(mode string) (Config, error) {
@@ -35,6 +37,15 @@ func Load(mode string) (Config, error) {
 	case "api":
 		c.Address = env("LISTEN_ADDR", "127.0.0.1:8080")
 		c.WebDir = env("WEB_DIR", "web")
+		hours, err := integer("HISTORY_RETENTION_HOURS", 0, 0, 720)
+		if err != nil {
+			return c, err
+		}
+		c.HistoryRetention = time.Duration(hours) * time.Hour
+		c.SecureCookies, err = strconv.ParseBool(env("SECURE_COOKIES", "false"))
+		if err != nil {
+			return c, errors.New("SECURE_COOKIES must be true or false")
+		}
 		return c, nil
 	case "worker":
 		c.WorkerID = os.Getenv("WORKER_ID")

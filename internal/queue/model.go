@@ -12,6 +12,7 @@ import (
 )
 
 var (
+	ErrCapacity    = errors.New("shared queue is full; wait for existing jobs to finish")
 	ErrNotFound    = errors.New("job not found")
 	ErrConflict    = errors.New("job cannot be changed in its current state")
 	ErrIdempotency = errors.New("idempotency key was used with a different request")

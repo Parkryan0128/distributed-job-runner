@@ -592,3 +592,34 @@ func TestPendingShowsClaimOrderAndScheduledJobs(t *testing.T) {
 		t.Fatalf("claimed job still pending: %+v %v", pending, err)
 	}
 }
+
+func TestLimitedAdmissionAndHistoryRetention(t *testing.T) {
+	s, p := testdb.New(t)
+	input := queue.Submit{Kind: "demo", Payload: json.RawMessage(`{}`)}
+	j, _, err := s.SubmitLimited(ctx, input, "replay", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = s.SubmitLimited(ctx, input, "", 1); !errors.Is(err, queue.ErrCapacity) {
+		t.Fatalf("capacity: %v", err)
+	}
+	replay, created, err := s.SubmitLimited(ctx, input, "replay", 1)
+	if err != nil || created || replay.ID != j.ID {
+		t.Fatalf("replay at capacity: %v", err)
+	}
+	if err = s.Cancel(ctx, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	execute(t, p, `UPDATE jobs SET updated_at=clock_timestamp()-interval '25 hours' WHERE id=$1`, j.ID)
+	active, _, err := s.SubmitLimited(ctx, input, "active", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	execute(t, p, `UPDATE jobs SET updated_at=clock_timestamp()-interval '25 hours' WHERE id=$1`, active.ID)
+	if n, err := s.PruneHistory(ctx, 24*time.Hour); err != nil || n != 1 {
+		t.Fatalf("prune %d: %v", n, err)
+	}
+	if _, err := s.Get(ctx, active.ID); err != nil {
+		t.Fatalf("active job removed: %v", err)
+	}
+}

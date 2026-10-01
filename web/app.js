@@ -713,6 +713,7 @@ async function animateJob(id, list, version) {
 function connectEvents() {
   stream?.close();
   stream = new EventSource("/api/events");
+  stream.addEventListener("reset", () => connectEvents());
   stream.addEventListener("snapshot", (e) => {
     const snap = JSON.parse(e.data);
     epoch++;

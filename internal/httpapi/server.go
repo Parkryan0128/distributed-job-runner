@@ -111,6 +111,9 @@ func (s *Server) failure(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, queue.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, queue.ErrCapacity):
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, queue.ErrConflict), errors.Is(err, queue.ErrIdempotency):
 		writeError(w, http.StatusConflict, err.Error())
 	default:
@@ -157,7 +160,12 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Idempotency-Key must contain at most 128 visible ASCII characters")
 		return
 	}
-	job, created, err := s.Store.Submit(r.Context(), input, key)
+	if !s.Demo.allowSubmit() {
+		w.Header().Set("Retry-After", "1")
+		writeError(w, http.StatusTooManyRequests, "Too many submissions. Try again shortly.")
+		return
+	}
+	job, created, err := s.Store.SubmitLimited(r.Context(), input, key, 100)
 	if err != nil {
 		s.failure(w, err)
 		return
