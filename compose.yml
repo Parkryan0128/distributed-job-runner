@@ -1,6 +1,5 @@
 x-runtime: &runtime
   image: distributed-job-runner:local
-  build: .
   restart: unless-stopped
   environment: &environment
     DATABASE_URL: postgres://runner:runner-local@postgres:5432/runner?sslmode=disable

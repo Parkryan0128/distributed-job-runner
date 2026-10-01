@@ -108,6 +108,24 @@ func TestAPISubmissionReplayConflictAndDetail(t *testing.T) {
 	}
 }
 
+func TestInvalidTaskValuesDoNotEnterTheQueue(t *testing.T) {
+	s, h := setup(t)
+	for _, body := range []string{
+		`{"kind":"statistics","payload":{"values":[null,10]}}`,
+		`{"kind":"statistics","payload":{"values":[0,null]}}`,
+		`{"kind":"checksum","payload":{"text":null}}`,
+		`{"kind":"checksum","payload":{}}`,
+	} {
+		expect(t, request(h, "POST", "/api/jobs", body, "", true), 400)
+	}
+	stats, err := s.Stats(context.Background())
+	if err != nil || stats.Queued != 0 {
+		t.Fatalf("invalid input entered the queue: %+v %v", stats, err)
+	}
+	submitted(t, h, `{"kind":"statistics","payload":{"values":[0,10]}}`)
+	submitted(t, h, `{"kind":"checksum","payload":{"text":""}}`)
+}
+
 func TestAPIRejectsInvalidAndOversizedRequests(t *testing.T) {
 	s, h := setup(t)
 	for _, body := range []string{`{`, `null`, `{}`, `{"kind":"demo","payload":{},"owner":"fake"}`, `{"kind":"shell","payload":{}}`, `{"kind":"demo","payload":{"work_ms":-1}}`, `{"kind":"demo","payload":{},"priority":10}`, `{"kind":"demo","payload":{},"max_attempts":-1}`, `{"kind":"statistics","payload":{"values":[]}}`, `{"kind":"demo","payload":{}} {}`} {

@@ -39,9 +39,6 @@ func run() error {
 		}
 		return healthcheck(address)
 	}
-	if mode != "api" && mode != "worker" && mode != "migrate" {
-		return errors.New("unknown command")
-	}
 	cfg, err := config.Load(mode)
 	if err != nil {
 		return err

@@ -10,6 +10,8 @@ Jobs support priorities, delayed execution, timeouts, cancellation, and capped e
 
 The included tasks calculate SHA-256 checksums and numeric statistics. A separate demo task can wait or fail a chosen number of times so recovery is easy to inspect. The [design note](docs/design.md) covers delivery guarantees and tradeoffs.
 
+`checksum` requires a `text` string (an empty string is valid). `statistics` requires 1–1000 numbers in `values`, each within ±1e12. Missing checksum text and null statistics entries are rejected rather than treated as empty text or zero.
+
 ## Run
 
 With Docker Compose:
@@ -45,6 +47,8 @@ go run ./cmd/runner api
 ```
 
 In another terminal with the same `DATABASE_URL`, run `go run ./cmd/runner worker`. `WORKER_ID`, `QUEUES`, `CONCURRENCY`, `LEASE_SECONDS`, and `POLL_MS` configure workers. Defaults are a generated ID, `default,reports`, 2 slots, a 10-second lease, and a 500ms polling interval.
+
+Worker settings do not affect the API or migration command.
 
 ## Tests
 
