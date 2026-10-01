@@ -543,3 +543,52 @@ func TestStateChangesRollBackWhenAttemptUpdateFails(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkerPresenceAndRunningJobs(t *testing.T) {
+	s, p := testdb.New(t)
+	if err := s.AnnounceWorker(ctx, "worker-a", 2); err != nil {
+		t.Fatal(err)
+	}
+	submit(t, s, queue.Submit{})
+	j := claim(t, s, "worker-a")
+	workers, err := s.Workers(ctx)
+	if err != nil || len(workers) != 1 || !workers[0].Online || workers[0].Concurrency != 2 || len(workers[0].Jobs) != 1 || workers[0].Jobs[0].ID != j.ID {
+		t.Fatalf("snapshot: %+v %v", workers, err)
+	}
+	execute(t, p, `UPDATE workers SET seen_at=clock_timestamp()-interval '6 seconds'`)
+	workers, err = s.Workers(ctx)
+	if err != nil || len(workers) != 1 || workers[0].Online || len(workers[0].Jobs) != 1 {
+		t.Fatalf("offline worker must retain leased job: %+v %v", workers, err)
+	}
+	if err := s.Cancel(ctx, j.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AnnounceWorker(ctx, "worker-a", 3); err != nil {
+		t.Fatal(err)
+	}
+	workers, err = s.Workers(ctx)
+	if err != nil || !workers[0].Online || workers[0].Concurrency != 3 || len(workers[0].Jobs) != 0 {
+		t.Fatalf("returning worker: %+v %v", workers, err)
+	}
+	execute(t, p, `UPDATE workers SET seen_at=clock_timestamp()-interval '6 minutes'`)
+	workers, err = s.Workers(ctx)
+	if err != nil || len(workers) != 0 {
+		t.Fatalf("stale workers: %+v %v", workers, err)
+	}
+}
+
+func TestPendingShowsClaimOrderAndScheduledJobs(t *testing.T) {
+	s, _ := testdb.New(t)
+	delayed := submit(t, s, queue.Submit{Priority: 9, DelaySeconds: 60})
+	ordinary := submit(t, s, queue.Submit{})
+	urgent := submit(t, s, queue.Submit{Priority: 9})
+	pending, err := s.Pending(ctx)
+	if err != nil || len(pending) != 3 || pending[0].ID != urgent.ID || pending[1].ID != ordinary.ID || pending[2].ID != delayed.ID {
+		t.Fatalf("pending order: %+v %v", pending, err)
+	}
+	claim(t, s, "worker-a")
+	pending, err = s.Pending(ctx)
+	if err != nil || len(pending) != 2 || pending[0].ID != ordinary.ID {
+		t.Fatalf("claimed job still pending: %+v %v", pending, err)
+	}
+}

@@ -42,6 +42,19 @@ func (w *Worker) Run(ctx context.Context) error {
 		w.Logger = slog.Default()
 	}
 	var wg sync.WaitGroup
+	wg.Go(func() {
+		for ctx.Err() == nil {
+			op, cancel := context.WithTimeout(ctx, 2*time.Second)
+			err := w.Store.AnnounceWorker(op, w.ID, w.Concurrency)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				w.Logger.Error("worker heartbeat", "error", err)
+			}
+			if !pause(ctx, time.Second) {
+				return
+			}
+		}
+	})
 	wg.Go(func() { w.recover(ctx) })
 	for range w.Concurrency {
 		wg.Go(func() { w.consume(ctx) })

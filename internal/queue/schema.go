@@ -1,6 +1,11 @@
 package queue
 
 const schema = `
+CREATE TABLE IF NOT EXISTS workers (
+    id text PRIMARY KEY,
+    concurrency integer NOT NULL CHECK (concurrency BETWEEN 1 AND 32),
+    seen_at timestamptz NOT NULL
+);
 CREATE TABLE IF NOT EXISTS jobs (
     id uuid PRIMARY KEY,
     sequence bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
@@ -35,4 +40,23 @@ CREATE TABLE IF NOT EXISTS attempts (
     error text NOT NULL DEFAULT '',
     PRIMARY KEY (job_id, number)
 );
+
+CREATE TABLE IF NOT EXISTS job_events (
+ id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ job jsonb NOT NULL,
+ previous text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX IF NOT EXISTS job_events_age ON job_events(created_at);
+CREATE OR REPLACE FUNCTION record_job_event() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ IF TG_OP = 'INSERT' OR OLD.status IS DISTINCT FROM NEW.status THEN
+  -- Serialize allocation until commit so a later event cannot overtake an uncommitted one.
+  PERFORM pg_advisory_xact_lock(7241074);
+  INSERT INTO job_events(job,previous) VALUES(to_jsonb(NEW),CASE WHEN TG_OP='INSERT' THEN '' ELSE OLD.status END);
+ END IF;
+ RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS job_event ON jobs;
+CREATE TRIGGER job_event AFTER INSERT OR UPDATE ON jobs FOR EACH ROW EXECUTE FUNCTION record_job_event();
 `
