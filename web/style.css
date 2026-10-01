@@ -455,24 +455,7 @@ footer {
   font-size: 12px;
   margin: 0 0 18px;
 }
-.login-card {
-  max-width: 460px;
-  margin: 90px auto;
-  padding: 30px;
-}
-.login-card h1 {
-  font-size: 34px;
-}
-.login-card > .muted {
-  font-size: 14px;
-  margin: 20px 0 28px;
-}
-.login-card button {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  margin-top: 15px;
-}
+
 label {
   display: block;
   font-size: 12px;
@@ -656,12 +639,7 @@ dialog .muted {
     flex-direction: column;
     gap: 6px;
   }
-  .login-card {
-    margin: 45px auto;
-  }
-  .login-card h1 {
-    font-size: 30px;
-  }
+
   .dialog-footer .small {
     max-width: 140px;
   }

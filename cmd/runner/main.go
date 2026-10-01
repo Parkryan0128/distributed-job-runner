@@ -70,7 +70,7 @@ func run() error {
 		w := worker.Worker{Store: store, ID: cfg.WorkerID, Queues: cfg.Queues, Concurrency: cfg.Concurrency, Lease: cfg.Lease, Poll: cfg.Poll}
 		return w.Run(ctx)
 	}
-	api := httpapi.Server{Store: store, Token: cfg.Token}
+	api := httpapi.Server{Store: store}
 	if _, err := os.Stat(cfg.WebDir + "/index.html"); err != nil {
 		return fmt.Errorf("dashboard assets: %w", err)
 	}

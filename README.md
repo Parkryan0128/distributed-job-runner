@@ -17,23 +17,21 @@ The included tasks calculate SHA-256 checksums and numeric statistics. A separat
 With Docker Compose:
 
 ```sh
-cp .env.example .env
 docker compose up --build --wait
 ```
 
-Open **http://localhost:8080** and connect with `local-runner-token-change-me`. Compose starts PostgreSQL, the API, and two workers with two execution slots each. Try **Retry twice**, then select the job to follow its attempt history. **Long job** gives you time to cancel work while it is running.
+Open **http://localhost:8080**. The console starts immediately; no login or API key is needed. Compose starts PostgreSQL, the API, and two workers with two execution slots each. Try **Retry twice**, then select the job to follow its attempt history. **Long job** gives you time to cancel work while it is running.
 
-Data stays in the PostgreSQL volume after `docker compose down`. The demo binds to localhost; for remote access, use an HTTPS reverse proxy and set a private `API_TOKEN`. The token grants access to the whole queue.
+This is a local demo. Data stays in the PostgreSQL volume after `docker compose down`. Compose publishes the console on localhost only.
 
 ```sh
 curl http://localhost:8080/api/jobs \
-  -H 'Authorization: Bearer local-runner-token-change-me' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: example-checksum' \
   -d '{"kind":"checksum","payload":{"text":"hello"}}'
 ```
 
-`GET /api/jobs` lists jobs with `status`, `queue`, `limit`, and `before` filters. `GET /api/jobs/{id}` includes attempt history; `POST /api/jobs/{id}/cancel` cancels queued or running work. `/api/stats` and `/metrics` expose state counts. Both require the same bearer token.
+`GET /api/jobs` lists jobs with `status`, `queue`, `limit`, and `before` filters. `GET /api/jobs/{id}` includes attempt history; `POST /api/jobs/{id}/cancel` cancels queued or running work. `GET /api/stats` provides the counts shown in the console.
 
 ## Development
 
@@ -41,7 +39,6 @@ Go 1.26+ and PostgreSQL 16 are required. The binary has `migrate`, `api`, and `w
 
 ```sh
 export DATABASE_URL=postgres://user:password@localhost/runner?sslmode=disable
-export API_TOKEN=your-local-development-token
 go run ./cmd/runner migrate
 go run ./cmd/runner api
 ```
@@ -77,7 +74,7 @@ Process tests kill a demo worker, pause PostgreSQL, and restart the API. [CI](ht
 - `internal/queue/` — persistence, claims, leases, and state transitions
 - `internal/worker/` — bounded execution, heartbeats, and recovery
 - `internal/task/` — task validation and handlers
-- `internal/httpapi/` — authenticated HTTP endpoints
+- `internal/httpapi/` — HTTP endpoints
 - `web/` — console served by the API
 - `tests/` — browser and process acceptance tests
 
