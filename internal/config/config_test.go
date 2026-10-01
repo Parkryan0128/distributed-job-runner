@@ -8,7 +8,6 @@ import (
 
 func TestCommandsOnlyReadTheirOwnSettings(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
-	t.Setenv("API_TOKEN", "valid-local-token")
 	t.Setenv("CONCURRENCY", "invalid")
 	t.Setenv("QUEUES", "invalid queue")
 	for _, mode := range []string{"api", "migrate"} {
@@ -16,26 +15,17 @@ func TestCommandsOnlyReadTheirOwnSettings(t *testing.T) {
 			t.Fatalf("%s was blocked by worker settings: %v", mode, err)
 		}
 	}
-	t.Setenv("API_TOKEN", "")
-	if _, err := config.Load("migrate"); err != nil {
-		t.Fatalf("migration requires an API credential: %v", err)
-	}
 	if _, err := config.Load("unknown"); err == nil {
 		t.Fatal("unknown command accepted")
 	}
 }
 
-func TestConfigurationRejectsMissingSecretsAndUnsafeWorkerLimits(t *testing.T) {
+func TestConfigurationRejectsMissingDatabaseAndUnsafeWorkerLimits(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
 	if _, err := config.Load("api"); err == nil {
 		t.Fatal("missing database accepted")
 	}
 	t.Setenv("DATABASE_URL", "postgres://localhost/test")
-	t.Setenv("API_TOKEN", "short")
-	if _, err := config.Load("api"); err == nil {
-		t.Fatal("short token accepted")
-	}
-	t.Setenv("API_TOKEN", "valid-local-token")
 	t.Setenv("CONCURRENCY", "0")
 	if _, err := config.Load("worker"); err == nil {
 		t.Fatal("zero concurrency accepted")

@@ -4,13 +4,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 
 const base = process.env.BASE_URL || "http://127.0.0.1:8080";
-const token = process.env.API_TOKEN || "local-runner-token-change-me";
 
 async function api(path, body) {
   const response = await fetch(`${base}${path}`, {
     method: body ? "POST" : "GET",
     headers: {
-      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -45,7 +43,6 @@ test("statistics run on the reports queue and preserve zero values", async () =>
   const invalid = await fetch(`${base}/api/jobs`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -175,7 +172,6 @@ test(
       const responses = await Promise.all([
         fetch(`${base}/readyz`, { signal: AbortSignal.timeout(8000) }),
         fetch(`${base}/api/jobs`, {
-          headers: { Authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(8000),
         }),
       ]);

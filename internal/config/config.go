@@ -13,7 +13,6 @@ import (
 
 type Config struct {
 	DatabaseURL string
-	Token       string
 	Address     string
 	WebDir      string
 	WorkerID    string
@@ -34,12 +33,8 @@ func Load(mode string) (Config, error) {
 	case "migrate":
 		return c, nil
 	case "api":
-		c.Token = os.Getenv("API_TOKEN")
-		c.Address = env("LISTEN_ADDR", ":8080")
+		c.Address = env("LISTEN_ADDR", "127.0.0.1:8080")
 		c.WebDir = env("WEB_DIR", "web")
-		if len(c.Token) < 16 {
-			return c, errors.New("API_TOKEN must contain at least 16 bytes")
-		}
 		return c, nil
 	case "worker":
 		c.WorkerID = os.Getenv("WORKER_ID")

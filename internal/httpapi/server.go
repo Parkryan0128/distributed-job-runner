@@ -2,10 +2,8 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -21,13 +19,12 @@ import (
 
 type Server struct {
 	Store  *queue.Store
-	Token  string
 	Logger *slog.Logger
 }
 
 func (s *Server) Handler(assets fs.FS) (http.Handler, error) {
-	if len(s.Token) < 16 || s.Store == nil {
-		return nil, errors.New("store and API_TOKEN of at least 16 bytes are required")
+	if s.Store == nil {
+		return nil, errors.New("store is required")
 	}
 	if s.Logger == nil {
 		s.Logger = slog.Default()
@@ -48,7 +45,6 @@ func (s *Server) Handler(assets fs.FS) (http.Handler, error) {
 	mux.HandleFunc("GET /api/jobs/{id}", s.get)
 	mux.HandleFunc("POST /api/jobs/{id}/cancel", s.cancel)
 	mux.HandleFunc("GET /api/stats", s.stats)
-	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "route not found") })
 	if assets != nil {
 		files := http.FileServerFS(assets)
@@ -66,14 +62,6 @@ func (s *Server) Handler(assets fs.FS) (http.Handler, error) {
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		w.Header().Set("Cache-Control", "no-store")
-		if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/metrics" {
-			expected := "Bearer " + s.Token
-			if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(expected)) != 1 {
-				w.Header().Set("WWW-Authenticate", "Bearer")
-				writeError(w, http.StatusUnauthorized, "valid bearer token required")
-				return
-			}
-		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
 		mux.ServeHTTP(w, r.WithContext(ctx))
@@ -229,13 +217,4 @@ func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	write(w, http.StatusOK, st)
-}
-func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
-	st, err := s.Store.Stats(r.Context())
-	if err != nil {
-		s.failure(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "# TYPE runner_jobs gauge\nrunner_jobs{status=\"queued\"} %d\nrunner_jobs{status=\"running\"} %d\nrunner_jobs{status=\"succeeded\"} %d\nrunner_jobs{status=\"dead\"} %d\nrunner_jobs{status=\"canceled\"} %d\n", st.Queued, st.Running, st.Succeeded, st.Dead, st.Canceled)
 }

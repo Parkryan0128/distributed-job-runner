@@ -16,33 +16,10 @@
         <span class="brand-sub">/ console</span></a
       >
       <div class="top-actions">
-        <span id="connection" class="connection">Not connected</span
-        ><button id="disconnect" class="quiet" hidden>Disconnect</button>
+        <span id="connection" class="connection">Connecting…</span>
       </div>
     </header>
-    <section id="login" class="login-card">
-      <p class="eyebrow">DISTRIBUTED JOB RUNNER</p>
-      <h1>Job Runner</h1>
-      <p class="muted">
-        Submit jobs and inspect their results and execution history.
-      </p>
-      <form id="login-form">
-        <label for="token">API token</label>
-        <input
-          id="token"
-          type="password"
-          autocomplete="off"
-          required
-          minlength="16"
-          placeholder="Enter your runner token"
-        />
-        <button class="primary" type="submit">
-          Connect to runner <span>↗</span>
-        </button>
-        <p id="login-error" class="error" role="alert"></p>
-      </form>
-    </section>
-    <main id="console" hidden>
+    <main id="console">
       <section class="page-heading">
         <div>
           <p class="eyebrow">JOB QUEUE</p>

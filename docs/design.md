@@ -12,12 +12,12 @@ Canceling a running job immediately fences its result. The handler receives canc
 
 ## API and console
 
-The bearer token is a single-operator credential, not a multi-tenant identity system. The browser keeps it in memory and aborts pending requests on disconnect. Payloads and response data are rendered as text. The API accepts only built-in task kinds, bounds payload size and execution settings, and does not expose shell commands or outbound webhook execution.
+The demo opens directly without accounts or API keys. Docker publishes it on localhost, and the standalone API also listens on loopback by default. Payloads and response data are rendered as text. Only the three built-in task kinds are accepted.
 
 The console polls every 1.5 seconds. Cursor pagination uses the insertion sequence so a newly submitted job does not shift an older page. The detail endpoint reads the job and attempt history from one consistent database snapshot. A client generation check discards responses from a previous selection or filter.
 
 ## Scope
 
-There is no cron scheduler, workflow DAG, global rate limiter, or automatic dead-letter replay. A failed job stays available for inspection; submit a new job to run it again. History and idempotency keys are retained with the job, with no automatic cleanup policy. Metrics report current persisted state, not lifetime totals. There are concurrency and failure tests, but no throughput claim or production load benchmark.
+There is no cron scheduler, workflow DAG, global rate limiter, or automatic dead-letter replay. A failed job stays available for inspection; submit a new job to run it again. History and idempotency keys are retained with the job, with no automatic cleanup policy. The dashboard counts show current persisted state. There are concurrency and failure tests, but no throughput claim or production load benchmark.
 
 The schema setup is an idempotent initial migration guarded by a transaction advisory lock. Future schema changes need versioned migrations rather than edits to `CREATE TABLE IF NOT EXISTS`.
