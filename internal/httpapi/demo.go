@@ -1,22 +1,13 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/Parkryan0128/distributed-job-runner/internal/queue"
 )
-
-type message struct {
-	kind string
-	id   int64
-	data any
-}
 
 // Demo owns the one public demo controller and broadcasts database events.
 // Run one API instance; workers remain independent processes.
@@ -67,17 +58,6 @@ func (d *Demo) session(w http.ResponseWriter, r *http.Request) string {
 	id := queue.NewID()
 	http.SetCookie(w, &http.Cookie{Name: "demo_session", Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: d.SecureCookies || r.TLS != nil, MaxAge: 86400})
 	return id
-}
-func (d *Demo) broadcast(m message) { d.mu.Lock(); defer d.mu.Unlock(); d.broadcastLocked(m) }
-func (d *Demo) broadcastLocked(m message) {
-	for ch := range d.subscribers {
-		select {
-		case ch <- m:
-		default:
-			close(ch)
-			delete(d.subscribers, ch)
-		}
-	}
 }
 func (d *Demo) control(w http.ResponseWriter, r *http.Request) {
 	who := d.session(w, r)
@@ -147,185 +127,6 @@ func (d *Demo) authorize(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
-}
-func (d *Demo) generate(ctx context.Context) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.expire()
-	if !d.running || time.Now().Before(d.next) {
-		return
-	}
-	rate, every := 0.3, 20
-	if d.level == "medium" {
-		rate, every = 1.2, 10
-	}
-	if d.level == "high" {
-		rate, every = 3, 5
-	}
-	d.next = time.Now().Add(time.Duration(float64(time.Second) / rate))
-	op, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	stats, err := d.store.Stats(op)
-	if err != nil || stats.Queued >= 40 {
-		return
-	}
-	n := d.sent + 1
-	fail := 0
-	if n%every == 0 {
-		fail = 1
-	}
-	payload, _ := json.Marshal(map[string]int{"work_ms": []int{1500, 2000, 2500}[(n-1)%3], "fail_until": fail})
-	if _, _, err = d.store.Submit(op, queue.Submit{Kind: "demo", Payload: payload}, ""); err == nil {
-		d.sent = n
-	}
-}
-func (d *Demo) Run(ctx context.Context) {
-	// A single reader drains committed transitions; no per-viewer database polling.
-	cursor := int64(0)
-	for {
-		snap, err := d.store.Snapshot(ctx)
-		if err == nil {
-			cursor = snap.Cursor
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Second):
-		}
-	}
-	close(d.Ready)
-	ticker := time.NewTicker(100 * time.Millisecond)
-	defer ticker.Stop()
-	var lastWorkers, lastPrune time.Time
-	for {
-		select {
-		case <-ctx.Done():
-			d.mu.Lock()
-			for ch := range d.subscribers {
-				close(ch)
-				delete(d.subscribers, ch)
-			}
-			d.mu.Unlock()
-			return
-		case <-ticker.C:
-			d.generate(ctx)
-			op, cancel := context.WithTimeout(ctx, 2*time.Second)
-			events, err := d.store.Events(op, cursor)
-			if err != nil {
-				d.broadcast(message{kind: "unavailable"})
-			}
-			if err == nil {
-				for _, e := range events {
-					d.broadcast(message{kind: "job", id: e.ID, data: e})
-					cursor = e.ID
-				}
-			}
-			if time.Since(lastWorkers) >= time.Second {
-				if workers, err := d.store.Workers(op); err == nil {
-					d.broadcast(message{kind: "workers", data: workers})
-				}
-				d.broadcast(message{kind: "demo"})
-				lastWorkers = time.Now()
-			}
-			if time.Since(lastPrune) >= time.Minute {
-				_ = d.store.PruneEvents(op)
-				if n, err := d.store.PruneHistory(op, d.HistoryRetention); err == nil && n > 0 {
-					// Counts/history changed without a job transition; reconnect to a fresh snapshot.
-					d.broadcast(message{kind: "reset"})
-				}
-				lastPrune = time.Now()
-			}
-			cancel()
-		}
-	}
-}
-func (d *Demo) stream(w http.ResponseWriter, r *http.Request) {
-	who := d.session(w, r)
-	ch := make(chan message, 64)
-	d.mu.Lock()
-	if len(d.subscribers) >= 200 {
-		d.mu.Unlock()
-		writeError(w, 503, "Demo is busy. Try again shortly.")
-		return
-	}
-	d.subscribers[ch] = struct{}{}
-	d.mu.Unlock()
-	defer func() { d.mu.Lock(); delete(d.subscribers, ch); d.mu.Unlock() }()
-	op, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	snap, err := d.store.Snapshot(op)
-	cancel()
-	if err != nil {
-		writeError(w, 503, "Snapshot unavailable")
-		return
-	}
-	rc := http.NewResponseController(w)
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("X-Accel-Buffering", "no")
-	send := func(kind string, id int64, data any) error {
-		_ = rc.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		raw, err := json.Marshal(data)
-		if err != nil {
-			return err
-		}
-		if id > 0 {
-			if _, err = fmt.Fprintf(w, "id: %d\n", id); err != nil {
-				return err
-			}
-		}
-		if _, err = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", kind, raw); err != nil {
-			return err
-		}
-		return rc.Flush()
-	}
-	if send("snapshot", snap.Cursor, snap) != nil {
-		return
-	}
-	if send("demo", 0, d.view(who)) != nil {
-		return
-	}
-	// A heartbeat also detects disconnected viewers while the queue is idle.
-	heartbeat := time.NewTicker(10 * time.Second)
-	defer heartbeat.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-heartbeat.C:
-			if send("heartbeat", 0, struct{}{}) != nil {
-				return
-			}
-		case m, ok := <-ch:
-			if !ok || m.kind == "unavailable" {
-				return
-			}
-			if m.kind == "reset" {
-				_ = send("reset", 0, struct{}{})
-				return
-			}
-			if m.id > 0 && m.id <= snap.Cursor {
-				continue
-			}
-			if m.kind == "demo" {
-				m.data = d.view(who)
-			}
-			if send(m.kind, m.id, m.data) != nil {
-				return
-			}
-		}
-	}
-}
-func sameOrigin(w http.ResponseWriter, r *http.Request) bool {
-	origin := r.Header.Get("Origin")
-	if origin != "" && origin != "http://"+r.Host && origin != "https://"+r.Host {
-		writeError(w, 403, "Cross-origin changes are not allowed.")
-		return false
-	}
-	if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
-		writeError(w, 403, "Cross-site changes are not allowed.")
-		return false
-	}
-	return true
 }
 
 // Called under the controller mutex. A global burst survives ownership changes.
