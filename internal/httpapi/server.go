@@ -41,10 +41,10 @@ func (s *Server) Handler(assets fs.FS) (http.Handler, error) {
 		}
 		write(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
-	mux.HandleFunc("POST /api/jobs", s.Demo.authorize(s.submit))
+	mux.HandleFunc("POST /api/jobs", s.submit)
 	mux.HandleFunc("GET /api/jobs", s.list)
 	mux.HandleFunc("GET /api/jobs/{id}", s.get)
-	mux.HandleFunc("POST /api/jobs/{id}/cancel", s.Demo.authorize(s.cancel))
+	mux.HandleFunc("POST /api/jobs/{id}/cancel", s.cancel)
 	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/pending", func(w http.ResponseWriter, r *http.Request) {
 		jobs, err := s.Store.Pending(r.Context())

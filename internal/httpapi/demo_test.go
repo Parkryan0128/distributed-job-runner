@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/Parkryan0128/distributed-job-runner/internal/httpapi"
 	"github.com/Parkryan0128/distributed-job-runner/internal/queue"
 	"github.com/Parkryan0128/distributed-job-runner/internal/testdb"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,6 +67,66 @@ func TestExclusiveControlAndExpiry(t *testing.T) {
 	}
 	if w = asVisitor(h, other, "POST", "/api/demo", `{"action":"claim"}`); w.Code != 200 {
 		t.Fatal("control was not released")
+	}
+}
+
+func TestSlowSubmissionDoesNotBlockControl(t *testing.T) {
+	for _, transfer := range []bool{false, true} {
+		t.Run(fmt.Sprintf("transfer=%t", transfer), func(t *testing.T) {
+			s, _ := testdb.New(t)
+			api := httpapi.Server{Store: s}
+			h, err := api.Handler(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			owner, visitor := queue.NewID(), queue.NewID()
+			expect(t, asVisitor(h, owner, "POST", "/api/demo", `{"action":"claim"}`), 200)
+			reader, writer := io.Pipe()
+			r := httptest.NewRequest("POST", "/api/jobs", reader)
+			r.Header.Set("Content-Type", "application/json")
+			r.AddCookie(&http.Cookie{Name: "demo_session", Value: owner})
+			w := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				h.ServeHTTP(w, r)
+			}()
+			defer func() {
+				writer.Close()
+				<-done
+				reader.Close()
+			}()
+			// Writing the prefix waits until the handler starts reading the body.
+			if _, err := io.WriteString(writer, `{"kind":"demo",`); err != nil {
+				t.Fatal(err)
+			}
+			view := make(chan *httptest.ResponseRecorder, 1)
+			go func() { view <- asVisitor(h, visitor, "GET", "/api/demo", "") }()
+			select {
+			case response := <-view:
+				expect(t, response, 200)
+			case <-time.After(time.Second):
+				t.Fatal("slow request body blocked another visitor's control status")
+			}
+			if transfer {
+				expect(t, asVisitor(h, owner, "POST", "/api/demo", `{"action":"stop"}`), 200)
+				expect(t, asVisitor(h, visitor, "POST", "/api/demo", `{"action":"claim"}`), 200)
+			}
+			if _, err := io.WriteString(writer, `"payload":{}}`); err != nil {
+				t.Fatal(err)
+			}
+			writer.Close()
+			<-done
+			status, queued := 201, 1
+			if transfer {
+				status, queued = 409, 0
+			}
+			expect(t, w, status)
+			stats, err := s.Stats(context.Background())
+			if err != nil || stats.Queued != queued {
+				t.Fatalf("queued=%d want=%d err=%v", stats.Queued, queued, err)
+			}
+		})
 	}
 }
 func TestStreamPreservesRapidTransitionsAndReconnects(t *testing.T) {

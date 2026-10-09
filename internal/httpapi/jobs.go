@@ -51,6 +51,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Idempotency-Key must contain at most 128 visible ASCII characters")
 		return
 	}
+	if !s.Demo.authorize(w, r) {
+		return
+	}
 	if !s.Demo.allowSubmit() {
 		w.Header().Set("Retry-After", "1")
 		writeError(w, http.StatusTooManyRequests, "Too many submissions. Try again shortly.")
@@ -128,7 +131,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) {
 	write(w, http.StatusOK, j)
 }
 func (s *Server) cancel(w http.ResponseWriter, r *http.Request) {
-	if !validID(w, r) {
+	if !validID(w, r) || !s.Demo.authorize(w, r) {
 		return
 	}
 	id := r.PathValue("id")

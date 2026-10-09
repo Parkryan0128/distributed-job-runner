@@ -12,8 +12,8 @@ const state = {
   selected: null,
   before: 0,
   next: 0,
-  generation: 0,
   controller: null,
+  refreshPending: false,
   rows: "",
   pending: null,
   submitting: false,
@@ -37,7 +37,11 @@ async function api(path, options = {}) {
     return null;
   });
   if (!response.ok) {
-    throw new Error(body?.error || `Request failed (${response.status})`);
+    const error = new Error(
+      body?.error || `Request failed (${response.status})`,
+    );
+    error.status = response.status;
+    throw error;
   }
   if (!body || typeof body !== "object")
     throw new Error("Server returned an invalid response");
@@ -159,37 +163,59 @@ function renderDetail(job) {
   );
 }
 
-async function refresh() {
+async function refresh({ background = false } = {}) {
+  if (background && state.controller) {
+    state.refreshPending = true;
+    return;
+  }
+  state.refreshPending = false;
   state.controller?.abort();
   const controller = new AbortController();
   state.controller = controller;
-  const generation = ++state.generation;
+  const current = () => state.controller === controller;
   const selected = state.selected;
   const query = new URLSearchParams({ limit: "20" });
   if ($("#status-filter").value) query.set("status", $("#status-filter").value);
   if (state.before) query.set("before", String(state.before));
-  try {
-    const [page, detail] = await Promise.all([
-      api(`/api/jobs?${query}`, { signal: controller.signal }),
-      selected
-        ? api(`/api/jobs/${selected}`, { signal: controller.signal })
-        : null,
-    ]);
-    if (generation !== state.generation) return;
-    renderJobs(page);
-    if (detail) renderDetail(detail);
-    $("#error").textContent = "";
-  } catch (error) {
-    if (generation !== state.generation || error.name === "AbortError") return;
-    $("#error").textContent = `${error.message}.`;
-  }
+  const results = await Promise.allSettled([
+    api(`/api/jobs?${query}`, { signal: controller.signal }).then((page) => {
+      if (current()) renderJobs(page);
+    }),
+    selected
+      ? api(`/api/jobs/${selected}`, { signal: controller.signal })
+          .then((detail) => {
+            if (current()) renderDetail(detail);
+          })
+          .catch((error) => {
+            if (!current()) return;
+            if (error.status !== 404) throw error;
+            state.selected = null;
+            clearDetail("This job is no longer in the retained history.");
+            $("#jobs .selected")?.classList.remove("selected");
+            paintActivity();
+          })
+      : null,
+  ]);
+  if (!current()) return;
+  const failed = results.find((result) => result.status === "rejected");
+  $("#error").textContent = failed ? `${failed.reason.message}.` : "";
+  state.controller = null;
+  if (state.refreshPending) tableRefresh();
+}
+
+function clearDetail(
+  message = "Select a job to inspect its attempts and result.",
+) {
+  $("#detail").hidden = true;
+  $("#detail-status").replaceChildren();
+  $("#detail-empty").hidden = false;
+  $("#detail-empty p").textContent = message;
+  $("#cancel-job").disabled = true;
 }
 
 function selectJob(id) {
   state.selected = id;
-  $("#detail").hidden = true;
-  $("#detail-status").replaceChildren();
-  $("#detail-empty").hidden = false;
+  clearDetail();
   refresh();
 }
 
@@ -343,24 +369,26 @@ const activity = new Map();
 const transitions = new Map();
 let tableTimer;
 
-function jobBlock(job, status) {
-  const button = text(
-    "button",
-    "",
-    "job-block" +
-      ((job.attempt > 0 && status !== "Running") || job.attempt > 1
-        ? " retry-job"
-        : ""),
+function jobBlock(job, status, existingJobs) {
+  let button = existingJobs.get(job.id);
+  if (!button) {
+    button = text("button", "", "job-block");
+    button.type = "button";
+    button.id = `activity-${job.id}`;
+    button.dataset.activityJob = job.id;
+    button.addEventListener("click", () => selectJob(job.id));
+  }
+  button.classList.toggle(
+    "retry-job",
+    (job.attempt > 0 && status !== "Running") || job.attempt > 1,
   );
-  if (status === "Succeeded") button.classList.add("completed-job");
-  button.type = "button";
-  button.id = `activity-${job.id}`;
-  button.dataset.activityJob = job.id;
+  button.classList.toggle("completed-job", status === "Succeeded");
+  button.classList.toggle("selected", job.id === state.selected);
   button.setAttribute(
     "aria-label",
     `${job.kind} ${job.id.slice(0, 8)} · ${status}`,
   );
-  button.append(text("code", job.id.slice(0, 8)));
+  button.replaceChildren(text("code", job.id.slice(0, 8)));
   if (status.includes("Retry"))
     button.append(
       text(
@@ -369,49 +397,18 @@ function jobBlock(job, status) {
       ),
     );
   button.title = `${job.id} · ${status} · attempt ${job.attempt}/${job.max_attempts}`;
-  if (job.id === state.selected) button.classList.add("selected");
-  button.addEventListener("click", () => selectJob(job.id));
   return button;
 }
 
 // Keep existing blocks and panels mounted so unrelated events cannot restart animations.
-function syncActivity(parent, desired, existingJobs) {
-  const old = [...parent.childNodes];
-  const used = new Set();
-  desired.forEach((next, index) => {
-    const jobID = next.dataset?.activityJob;
-    const workerID = next.dataset?.workerId;
-    let current = jobID
-      ? existingJobs.get(jobID)
-      : workerID
-        ? old.find((node) => node.dataset?.workerId === workerID)
-        : old[index];
-    if (
-      !current ||
-      used.has(current) ||
-      current.nodeName !== next.nodeName ||
-      (!jobID && current.dataset?.activityJob) ||
-      (!workerID && current.dataset?.workerId)
-    )
-      current = next;
-    if (current !== next) {
-      if (current.nodeType === Node.TEXT_NODE) {
-        if (current.data !== next.data) current.data = next.data;
-      } else {
-        for (const attr of [...current.attributes])
-          if (!next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
-        for (const attr of next.attributes)
-          if (current.getAttribute(attr.name) !== attr.value)
-            current.setAttribute(attr.name, attr.value);
-        syncActivity(current, [...next.childNodes], existingJobs);
-      }
-    }
-    used.add(current);
-    if (parent.childNodes[index] !== current)
-      parent.insertBefore(current, parent.childNodes[index] || null);
+function syncChildren(parent, desired) {
+  desired.forEach((child, index) => {
+    if (parent.children[index] !== child)
+      parent.insertBefore(child, parent.children[index] || null);
   });
-  for (const child of [...parent.childNodes])
-    if (!used.has(child)) child.remove();
+  const keep = new Set(desired);
+  for (const child of [...parent.children])
+    if (!keep.has(child)) child.remove();
 }
 
 const blockMotion = new WeakMap();
@@ -465,6 +462,7 @@ function renderWorkers(workers, pending, waitingCount) {
             : new Date(j.available_at) > new Date()
               ? "Scheduled"
               : "Queued",
+          existingJobs,
         ),
       )
     : waitingCount
@@ -478,13 +476,22 @@ function renderWorkers(workers, pending, waitingCount) {
     );
     pendingBlocks.push(more);
   }
-  syncActivity($("#pending-jobs"), pendingBlocks, existingJobs);
+  syncChildren($("#pending-jobs"), pendingBlocks);
+  const existingPanels = new Map(
+    [...$("#workers").children].map((panel) => [panel.dataset.workerId, panel]),
+  );
   const panels = workers.map((worker) => {
-    const panel = text("section", "", "worker-panel");
-    panel.dataset.workerId = worker.id;
-    panel.setAttribute("aria-label", worker.id);
-    const heading = text("div", "", "activity-heading");
-    heading.append(
+    let panel = existingPanels.get(worker.id);
+    if (!panel) {
+      panel = text("section", "", "worker-panel");
+      panel.dataset.workerId = worker.id;
+      panel.setAttribute("aria-label", worker.id);
+      panel.append(
+        text("div", "", "activity-heading"),
+        text("div", "", "job-blocks"),
+      );
+    }
+    panel.firstElementChild.replaceChildren(
       text("h3", worker.id),
       text(
         "span",
@@ -493,27 +500,25 @@ function renderWorkers(workers, pending, waitingCount) {
           : "Offline · waiting for lease recovery",
       ),
     );
-    const blocks = text("div", "", "job-blocks");
-    blocks.append(
-      ...worker.jobs.map((j) =>
-        jobBlock(
-          j,
-          j.status === "succeeded"
-            ? "Succeeded"
-            : !worker.online
-              ? "Lease recovery pending"
-              : j.attempt > 1
-                ? "Retrying"
-                : "Running",
-        ),
+    const blocks = worker.jobs.map((j) =>
+      jobBlock(
+        j,
+        j.status === "succeeded"
+          ? "Succeeded"
+          : !worker.online
+            ? "Lease recovery pending"
+            : j.attempt > 1
+              ? "Retrying"
+              : "Running",
+        existingJobs,
       ),
     );
     for (let i = worker.jobs.length; i < worker.concurrency; i++)
-      blocks.append(text("div", worker.online ? "—" : "Offline", "empty-slot"));
-    panel.append(heading, blocks);
+      blocks.push(text("div", worker.online ? "—" : "Offline", "empty-slot"));
+    syncChildren(panel.lastElementChild, blocks);
     return panel;
   });
-  syncActivity(
+  syncChildren(
     $("#workers"),
     panels.length
       ? panels
@@ -524,7 +529,6 @@ function renderWorkers(workers, pending, waitingCount) {
             "muted",
           ),
         ],
-    existingJobs,
   );
   if (
     !document.hidden &&
@@ -677,7 +681,7 @@ function tableRefresh() {
   if (!tableTimer)
     tableTimer = setTimeout(() => {
       tableTimer = null;
-      refresh();
+      refresh({ background: true });
     }, 300);
 }
 async function animateJob(id, list, version) {
@@ -715,7 +719,7 @@ function connectEvents() {
     updateStats();
     paintActivity();
     renderWorkload();
-    refresh();
+    refresh({ background: true });
   });
   stream.addEventListener("job", (e) => {
     const event = JSON.parse(e.data);

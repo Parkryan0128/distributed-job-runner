@@ -172,6 +172,72 @@ test("a delayed previous selection cannot overwrite the current job", async ({
   await expect(page.getByTestId("job-id")).toHaveText(current.id);
 });
 
+test("slow list responses still render while workload events continue", async ({
+  page,
+  request,
+}) => {
+  await openConsole(page);
+  await page.route("**/api/jobs?**", async (route) => {
+    const response = await route.fetch();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.fulfill({ response });
+  });
+  try {
+    const response = await request.post("/api/demo", {
+      data: { action: "start", level: "high" },
+    });
+    expect(response.status()).toBe(200);
+    const job = await create(request, { work_ms: 0 });
+    await expect(page.locator(`[data-job-id="${job.id}"]`)).toContainText(
+      "Succeeded",
+      { timeout: 5000 },
+    );
+    expect((await (await request.get("/api/demo")).json()).running).toBe(true);
+    await expect(page.locator("#error")).toBeEmpty();
+  } finally {
+    await request.post("/api/demo", { data: { action: "stop" } });
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
+test("a missing selected job clears the inspector and keeps the list updating", async ({
+  page,
+  request,
+}) => {
+  const old = await create(request, { work_ms: 0 });
+  await openConsole(page);
+  await page
+    .getByRole("button", { name: `Open job ${old.id.slice(0, 8)}` })
+    .click();
+  await expect(page.getByTestId("job-id")).toHaveText(old.id);
+  let detailRequests = 0;
+  await page.route(`**/api/jobs/${old.id}`, (route) => {
+    detailRequests++;
+    return route.fulfill({
+      status: 404,
+      contentType: "application/json",
+      body: '{"error":"job not found"}',
+    });
+  });
+  const next = await create(request, { work_ms: 0 });
+  await expect(page.locator("#detail-empty")).toContainText(
+    "no longer in the retained history",
+  );
+  await expect(page.locator("#detail")).toBeHidden();
+  await expect(page.locator("#jobs .selected")).toHaveCount(0);
+  await expect(page.locator(`[data-job-id="${next.id}"]`)).toBeVisible();
+  const later = await create(request, { work_ms: 0 });
+  await expect(page.locator(`[data-job-id="${later.id}"]`)).toContainText(
+    "Succeeded",
+  );
+  expect(detailRequests).toBe(1);
+  await expect(page.locator("#error")).toBeEmpty();
+  await page
+    .getByRole("button", { name: `Open job ${later.id.slice(0, 8)}` })
+    .click();
+  await expect(page.getByTestId("job-id")).toHaveText(later.id);
+});
+
 test("mobile console and composer fit the viewport", async ({
   page,
 }, testInfo) => {

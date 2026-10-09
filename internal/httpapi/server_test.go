@@ -101,10 +101,9 @@ func TestAPISubmissionReplayConflictAndDetail(t *testing.T) {
 func TestInvalidTaskValuesDoNotEnterTheQueue(t *testing.T) {
 	s, h := setup(t)
 	for _, body := range []string{
-		`{"kind":"statistics","payload":{"values":[null,10]}}`,
-		`{"kind":"statistics","payload":{"values":[0,null]}}`,
-		`{"kind":"checksum","payload":{"text":null}}`,
-		`{"kind":"checksum","payload":{}}`,
+		`{"kind":"demo","payload":{"work_ms":"10"}}`,
+		`{"kind":"demo","payload":{"fail_until":true}}`,
+		`{"kind":"demo","payload":null}`,
 	} {
 		expect(t, request(h, "POST", "/api/jobs", body, ""), 400)
 	}
@@ -118,10 +117,10 @@ func TestInvalidTaskValuesDoNotEnterTheQueue(t *testing.T) {
 
 func TestAPIRejectsInvalidAndOversizedRequests(t *testing.T) {
 	s, h := setup(t)
-	for _, body := range []string{`{`, `null`, `{}`, `{"kind":"demo","payload":{},"owner":"fake"}`, `{"kind":"shell","payload":{}}`, `{"kind":"demo","payload":{"work_ms":-1}}`, `{"kind":"demo","payload":{},"priority":10}`, `{"kind":"demo","payload":{},"max_attempts":-1}`, `{"kind":"statistics","payload":{"values":[]}}`, `{"kind":"demo","payload":{}} {}`} {
+	for _, body := range []string{`{`, `null`, `{}`, `{"kind":"demo","payload":{},"owner":"fake"}`, `{"kind":"shell","payload":{}}`, `{"kind":"demo","payload":{"work_ms":-1}}`, `{"kind":"demo","payload":{},"priority":10}`, `{"kind":"demo","payload":{},"max_attempts":-1}`, `{"kind":"demo","payload":{}} {}`} {
 		expect(t, request(h, "POST", "/api/jobs", body, ""), 400)
 	}
-	expect(t, request(h, "POST", "/api/jobs", `{"kind":"checksum","payload":{"text":"`+strings.Repeat("a", 33000)+`"}}`, ""), 413)
+	expect(t, request(h, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`+strings.Repeat(" ", 33000), ""), 413)
 	expect(t, request(h, "POST", "/api/jobs", `{"kind":"demo","payload":{}}`, strings.Repeat("x", 129)), 400)
 	r := httptest.NewRequest("POST", "/api/jobs", strings.NewReader(`{}`))
 

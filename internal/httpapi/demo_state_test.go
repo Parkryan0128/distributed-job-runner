@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -141,6 +143,24 @@ func TestSubmissionBudgetRefillsAndSurvivesControlTransfer(t *testing.T) {
 	}
 	if d.allowSubmit() {
 		t.Fatal("idle budget exceeded the burst cap")
+	}
+}
+
+func TestConcurrentSubmissionsShareOneBudget(t *testing.T) {
+	d := NewDemo(nil)
+	start := d.tokensUpdated
+	var accepted atomic.Int64
+	var group sync.WaitGroup
+	for range 100 {
+		group.Go(func() {
+			if d.allowSubmit() {
+				accepted.Add(1)
+			}
+		})
+	}
+	group.Wait()
+	if n := accepted.Load(); n < 20 || n > 20+int64(time.Since(start).Seconds()*5) {
+		t.Fatalf("concurrent burst exceeded the limit: %d", n)
 	}
 }
 

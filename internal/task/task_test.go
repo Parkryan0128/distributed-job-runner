@@ -13,9 +13,7 @@ import (
 func TestTaskPayloadValidation(t *testing.T) {
 	for _, c := range []struct{ kind, payload string }{
 		{"shell", `{}`}, {"demo", `{"work_ms":120001}`}, {"demo", `{"fail_until":-1}`}, {"demo", `{"unknown":1}`},
-		{"demo", `null`}, {"demo", `[]`}, {"statistics", `{"values":[]}`}, {"statistics", `{"values":[1e13]}`}, {"checksum", `{"text":7}`},
-		{"statistics", `{"values":[null,10]}`}, {"statistics", `{"values":[0,null]}`},
-		{"checksum", `{}`}, {"checksum", `{"text":null}`},
+		{"demo", `null`}, {"demo", `[]`},
 	} {
 		t.Run(c.kind+c.payload, func(t *testing.T) {
 			_, err := task.Run(context.Background(), queue.Job{Kind: c.kind, Payload: json.RawMessage(c.payload)})

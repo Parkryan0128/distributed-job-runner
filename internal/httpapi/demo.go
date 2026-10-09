@@ -115,22 +115,25 @@ func (d *Demo) control(w http.ResponseWriter, r *http.Request) {
 	d.mu.Unlock()
 	write(w, 200, d.view(who))
 }
-func (d *Demo) authorize(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		who := d.session(w, r)
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		d.expire()
-		if d.owner == "" || d.owner != who {
-			writeError(w, 409, "Take control before changing jobs.")
-			return
-		}
-		next(w, r)
+
+// Check ownership when admitting a mutation, after reading its input. An admitted
+// database operation may finish after the turn ends without blocking the next one.
+func (d *Demo) authorize(w http.ResponseWriter, r *http.Request) bool {
+	who := d.session(w, r)
+	d.mu.Lock()
+	d.expire()
+	allowed := d.owner != "" && d.owner == who
+	d.mu.Unlock()
+	if !allowed {
+		writeError(w, 409, "Take control before changing jobs.")
 	}
+	return allowed
 }
 
-// Called under the controller mutex. A global burst survives ownership changes.
+// A global burst survives ownership changes.
 func (d *Demo) allowSubmit() bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	now := time.Now()
 	d.submitTokens = min(20, d.submitTokens+now.Sub(d.tokensUpdated).Seconds()*5)
 	d.tokensUpdated = now

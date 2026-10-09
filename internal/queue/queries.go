@@ -6,10 +6,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Store) get(ctx context.Context, id string) (Job, error) {
-	return scanJob(s.pool.QueryRow(ctx, `SELECT `+columns+` FROM jobs WHERE id=$1`, id))
-}
-
 func (s *Store) Get(ctx context.Context, id string) (Detail, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
