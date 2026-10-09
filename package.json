@@ -4,8 +4,8 @@
   "scripts": {
     "test:browser": "playwright test",
     "test:acceptance": "node --test tests/acceptance/*.test.mjs",
-    "format": "prettier --write web tests package.json .github/workflows deploy compose.yml README.md docs",
-    "format:check": "prettier --check web tests package.json .github/workflows deploy compose.yml README.md docs"
+    "format": "prettier --write web tests package.json .github/workflows deploy compose.yml README.md",
+    "format:check": "prettier --check web tests package.json .github/workflows deploy compose.yml README.md"
   },
   "devDependencies": {
     "@playwright/test": "1.58.2",

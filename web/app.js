@@ -76,19 +76,8 @@ function renderJobs(page) {
   const fingerprint = JSON.stringify([
     state.selected,
     page.jobs.map(
-      ({
+      ({ id, status, attempt, max_attempts, created_at, worker_id }) => ({
         id,
-        kind,
-        queue,
-        status,
-        attempt,
-        max_attempts,
-        created_at,
-        worker_id,
-      }) => ({
-        id,
-        kind,
-        queue,
         status,
         attempt,
         max_attempts,
@@ -204,11 +193,10 @@ function selectJob(id) {
   refresh();
 }
 
-for (const id of ["#status-filter"])
-  $(id).addEventListener("change", () => {
-    state.before = 0;
-    refresh();
-  });
+$("#status-filter").addEventListener("change", () => {
+  state.before = 0;
+  refresh();
+});
 for (const button of document.querySelectorAll(".stat"))
   button.addEventListener("click", () => {
     $("#status-filter").value = button.dataset.status;
@@ -491,7 +479,6 @@ function renderWorkers(workers, pending, waitingCount) {
     pendingBlocks.push(more);
   }
   syncActivity($("#pending-jobs"), pendingBlocks, existingJobs);
-  $("#pending-note").textContent = "";
   const panels = workers.map((worker) => {
     const panel = text("section", "", "worker-panel");
     panel.dataset.workerId = worker.id;
@@ -724,7 +711,6 @@ function connectEvents() {
     state.stats = snap.stats;
     workers = snap.workers;
     connected = true;
-    $("#connection").textContent = "Live";
     $("#error").textContent = "";
     updateStats();
     paintActivity();
@@ -766,7 +752,6 @@ function connectEvents() {
 }
 function connectionLost() {
   connected = false;
-  $("#connection").textContent = "Reconnecting";
   $("#error").textContent = "Connection lost. Reconnecting…";
   renderWorkload();
 }
