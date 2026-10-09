@@ -199,9 +199,7 @@ test("SSE reconnect restores the selected job", async ({ page, context }) => {
   await expect(page.locator("#detail-status")).toHaveText("Succeeded");
   await context.setOffline(true);
   await expect(page.getByRole("button", { name: "+ New job" })).toBeDisabled();
-  await expect(page.locator("#error")).toHaveText(
-    "Connection lost. Reconnecting…",
-  );
+  await expect(page.locator("#workload-state")).toHaveText("Reconnecting…");
   await context.setOffline(false);
   await expect(page.getByRole("button", { name: "+ New job" })).toBeEnabled();
   await expect(page.getByTestId("job-id")).toHaveText(id);
