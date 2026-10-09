@@ -25,8 +25,7 @@
           ><small>Waiting for a slot</small>
         </button>
         <button class="stat" data-status="running">
-          <span><i class="dot"></i> Running</span
-          ><strong id="count-running">0</strong
+          <span>Running</span><strong id="count-running">0</strong
           ><small id="slot-summary">Discovering capacity…</small>
         </button>
         <button class="stat" data-status="succeeded">
@@ -79,18 +78,15 @@
           <div class="execution" aria-label="Current job activity">
             <div class="activity-heading">
               <h3>Shared queue <span id="pending-count"></span></h3>
-              <span id="connection" hidden>Connecting…</span>
             </div>
             <div id="pending-jobs" class="job-blocks">
               <p class="muted">Loading queued jobs…</p>
             </div>
-            <p id="pending-note" class="activity-note"></p>
             <div id="workers">
               <p class="muted">Waiting for worker heartbeats…</p>
             </div>
           </div>
         </div>
-        <p id="workload-error" class="error" role="alert"></p>
       </section>
       <section class="workspace">
         <div class="panel job-panel">
@@ -219,7 +215,7 @@
           </button>
         </div>
         <h3 class="custom-task-heading">Custom task</h3>
-        <div class="form-grid task-fields" data-task-fields="demo">
+        <div class="form-grid">
           <label
             >Task time (s)<input
               id="task-time"

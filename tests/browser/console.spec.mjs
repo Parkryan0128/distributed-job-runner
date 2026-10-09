@@ -14,7 +14,7 @@ async function openConsole(page) {
   await expect(
     page.getByRole("heading", { name: "Queue monitor" }),
   ).toBeVisible();
-  await expect(page.locator("#connection")).toHaveText("Live");
+  await expect(page.getByRole("button", { name: "+ New job" })).toBeEnabled();
 }
 
 async function submit(page, preset) {
@@ -95,7 +95,7 @@ test("a failed cancellation stays visible after polling and can be retried", asy
   );
   await page.getByRole("button", { name: "Cancel job" }).click();
   await expect(page.getByRole("button", { name: "Cancel job" })).toBeEnabled();
-  await expect(page.locator("#connection")).toHaveText("Live");
+  await expect(page.getByRole("button", { name: "+ New job" })).toBeEnabled();
   await expect(page.locator("#action-error")).toHaveText(
     "service temporarily unavailable",
   );
@@ -198,9 +198,12 @@ test("SSE reconnect restores the selected job", async ({ page, context }) => {
   const id = await submit(page, "Quick success");
   await expect(page.locator("#detail-status")).toHaveText("Succeeded");
   await context.setOffline(true);
-  await expect(page.locator("#connection")).toHaveText("Reconnecting");
+  await expect(page.getByRole("button", { name: "+ New job" })).toBeDisabled();
+  await expect(page.locator("#error")).toHaveText(
+    "Connection lost. Reconnecting…",
+  );
   await context.setOffline(false);
-  await expect(page.locator("#connection")).toHaveText("Live");
+  await expect(page.getByRole("button", { name: "+ New job" })).toBeEnabled();
   await expect(page.getByTestId("job-id")).toHaveText(id);
 });
 

@@ -27,8 +27,7 @@ body {
 }
 button,
 input,
-select,
-textarea {
+select {
   font: inherit;
   color: inherit;
 }
@@ -54,8 +53,7 @@ button:disabled {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
-select:focus-visible,
-textarea:focus-visible {
+select:focus-visible {
   outline: 2px solid var(--amber);
   outline-offset: 2px;
 }
@@ -96,22 +94,6 @@ small {
 small {
   font-size: 11px;
 }
-.connection {
-  font: 11px var(--mono);
-  color: var(--dim);
-}
-.connection:before {
-  content: "";
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  background: var(--amber);
-  margin-right: 7px;
-  border-radius: 50%;
-}
-.connection.live:before {
-  background: var(--ink);
-}
 main {
   max-width: 1440px;
   margin: auto;
@@ -132,12 +114,10 @@ main {
   line-height: 1.5;
   margin: 10px 0;
   overflow-wrap: anywhere;
+  color: var(--red);
 }
 .error:empty {
   display: none;
-}
-.error {
-  color: var(--red);
 }
 .stats {
   display: grid;
@@ -172,9 +152,6 @@ main {
 }
 .stat small {
   font-size: 11px;
-}
-.dot {
-  display: none;
 }
 .panel {
   background: var(--panel);
@@ -246,6 +223,7 @@ main {
 dd {
   margin: 0;
   font-family: var(--mono);
+  overflow-wrap: anywhere;
 }
 .load-meta p {
   font-size: 11px;
@@ -265,8 +243,7 @@ dd {
   margin-bottom: 10px;
   flex-wrap: wrap;
 }
-.activity-heading span,
-.activity-note {
+.activity-heading span {
   font: 11px var(--mono);
   color: var(--dim);
 }
@@ -275,39 +252,36 @@ dd {
   flex-wrap: wrap;
   gap: 8px;
   align-items: stretch;
+  min-height: 34px;
 }
 .job-block {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 6px 14px;
-  min-width: 170px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-width: 92px;
+  min-height: 34px;
   text-align: left;
-  padding: 10px 12px;
+  padding: 7px 9px;
   white-space: normal;
-  flex: 0 1 210px;
   background: var(--soft);
-}
-.job-block strong {
-  font-size: 12px;
-  font-weight: 500;
 }
 .job-block code {
   font: 11px var(--mono);
 }
-.job-block span,
 .job-block small {
-  grid-column: 1/-1;
-  font-size: 11px;
-  color: var(--dim);
+  font: 10px var(--mono);
+  color: var(--amber);
 }
 .job-block.selected {
   background: var(--selected);
   border-color: var(--ink);
 }
 .empty-slot {
-  min-width: 150px;
-  min-height: 84px;
-  flex: 1;
+  min-width: 92px;
+  min-height: 34px;
+  flex: 0 0 92px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -319,14 +293,20 @@ dd {
 #pending-jobs {
   min-height: 38px;
   align-items: center;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 #pending-jobs .job-block {
-  min-width: 155px;
-  flex-basis: 180px;
+  width: 100px;
+  min-width: 100px;
+  padding-inline: 5px;
 }
-.activity-note {
-  margin-top: 9px;
-  line-height: 1.6;
+.queue-overflow {
+  flex: 0 0 68px;
+  align-self: center;
+  white-space: nowrap;
+  font: 11px var(--mono);
+  color: var(--dim);
 }
 #workers {
   display: grid;
@@ -336,17 +316,13 @@ dd {
 .worker-panel {
   min-width: 0;
 }
-.worker-panel .job-block {
-  flex: 1;
-  min-width: 140px;
+#workers .job-block {
+  background: light-dark(#fff8dc, #393522);
 }
 @media (max-width: 1150px) {
   #workers {
     grid-template-columns: 1fr;
   }
-}
-.workload > .error {
-  margin: 10px 16px;
 }
 .workspace {
   display: grid;
@@ -391,8 +367,7 @@ dd {
   color: var(--dim);
 }
 select,
-input,
-textarea {
+input {
   border: 1px solid var(--line);
   border-radius: 3px;
   background: var(--panel);
@@ -511,11 +486,6 @@ td button:hover {
 .detail-section {
   border-top: 1px solid var(--faint);
 }
-.eyebrow {
-  font: 11px var(--mono);
-  color: var(--dim);
-  margin-bottom: 7px;
-}
 #detail-id {
   font: 12px/1.6 var(--mono);
   overflow-wrap: anywhere;
@@ -532,9 +502,6 @@ dl > div {
 }
 dt {
   color: var(--dim);
-}
-dd {
-  overflow-wrap: anywhere;
 }
 .danger {
   width: 100%;
@@ -643,6 +610,9 @@ dialog::backdrop {
   margin-top: 4px;
   white-space: normal;
 }
+.custom-task-heading {
+  margin: 24px 0 12px;
+}
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -661,14 +631,6 @@ label {
   display: block;
   width: 100%;
   margin-top: 6px;
-}
-textarea {
-  display: block;
-  width: calc(100% - 36px);
-  margin: 0 18px;
-  font: 12px/1.6 var(--mono);
-  background: var(--soft);
-  resize: vertical;
 }
 .options {
   margin-top: 16px;
@@ -784,63 +746,11 @@ textarea {
     min-height: 44px;
   }
   input,
-  select,
-  textarea {
+  select {
     font-size: 16px;
   }
 }
 
-/* Jobs are compact identities; their containing row communicates state. */
-.job-block,
-#pending-jobs .job-block,
-.worker-panel .job-block {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  min-width: 92px;
-  min-height: 34px;
-  padding: 7px 9px;
-}
-.job-block small {
-  font: 10px var(--mono);
-  color: var(--amber);
-}
-.empty-slot {
-  flex: 0 0 92px;
-  min-width: 92px;
-  min-height: 34px;
-}
-.job-blocks {
-  min-height: 34px;
-}
-#workers .job-block {
-  background: light-dark(#fff8dc, #393522);
-}
-.activity-note:empty {
-  display: none;
-}
-
-.custom-task-heading {
-  margin: 24px 0 12px;
-}
-#pending-jobs {
-  flex-wrap: nowrap;
-  overflow: hidden;
-}
-#pending-jobs .job-block {
-  width: 100px;
-  min-width: 100px;
-  padding-inline: 5px;
-}
-.queue-overflow {
-  flex: 0 0 68px;
-  align-self: center;
-  white-space: nowrap;
-  font: 11px var(--mono);
-  color: var(--dim);
-}
 #workers .job-block.completed-job {
   background: #eaf6ed;
   border-color: #86b996;

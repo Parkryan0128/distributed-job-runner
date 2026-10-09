@@ -31,7 +31,7 @@ Committed job transitions → API → SSE → Web console
 
 Jobs support priority, delayed execution, timeouts, cancellation, and submission idempotency. Attempt numbers prevent an old worker from overwriting a newer attempt's result.
 
-Execution is **at least once**: a recovered job may run again. Handlers with external side effects need their own idempotency. See the [design notes](docs/design.md) for the guarantees and tradeoffs.
+Execution is **at least once**: a recovered job may run again. Handlers with external side effects need their own idempotency.
 
 ## Try the demo
 
