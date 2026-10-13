@@ -9,7 +9,18 @@ import (
 )
 
 func (s *Store) Submit(ctx context.Context, input Submit, key string) (Job, bool, error) {
-	return s.submit(ctx, input, key, s.pool)
+	// A canceled INSERT may still finish on the server. Keep it uncommitted
+	// until the caller has received the result and can complete the transaction.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Job{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	j, created, err := s.submit(ctx, input, key, tx)
+	if err != nil {
+		return Job{}, false, err
+	}
+	return j, created, tx.Commit(ctx)
 }
 
 // SubmitLimited serializes admission while preserving idempotent replays at capacity.
