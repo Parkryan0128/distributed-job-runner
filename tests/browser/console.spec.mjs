@@ -200,6 +200,79 @@ test("slow list responses still render while workload events continue", async ({
   }
 });
 
+test("failed list reads retry while the queue is idle and SSE stays connected", async ({
+  page,
+  request,
+}) => {
+  const job = await create(request, { work_ms: 0 });
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(`/api/jobs/${job.id}`)).json()).status,
+    )
+    .toBe("succeeded");
+  const reads = [];
+  await expect
+    .poll(async () => {
+      const stats = await (await request.get("/api/stats")).json();
+      return stats.queued + stats.running;
+    })
+    .toBe(0);
+  await page.route("**/api/jobs?**", (route) => {
+    reads.push(Date.now());
+    if (reads.length <= 2)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"temporary list failure"}',
+      });
+    return route.continue();
+  });
+  await openConsole(page);
+  await expect(page.locator("#error")).toContainText("temporary list failure");
+  await expect(page.locator(`[data-job-id="${job.id}"]`)).toContainText(
+    "Succeeded",
+  );
+  await expect(page.locator("#error")).toBeEmpty();
+  expect(reads).toHaveLength(3);
+  expect(reads[1] - reads[0]).toBeGreaterThanOrEqual(900);
+  expect(reads[2] - reads[1]).toBeGreaterThanOrEqual(1800);
+});
+
+test("a failed detail read recovers without a new job event", async ({
+  page,
+  request,
+}) => {
+  const job = await create(request, { work_ms: 0 });
+  await expect
+    .poll(
+      async () =>
+        (await (await request.get(`/api/jobs/${job.id}`)).json()).status,
+    )
+    .toBe("succeeded");
+  await openConsole(page);
+  let reads = 0;
+  await page.route(`**/api/jobs/${job.id}`, (route) => {
+    if (++reads === 1)
+      return route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: '{"error":"temporary detail failure"}',
+      });
+    return route.continue();
+  });
+  await page
+    .getByRole("button", { name: `Open job ${job.id.slice(0, 8)}` })
+    .click();
+  await expect(page.locator("#error")).toContainText(
+    "temporary detail failure",
+  );
+  await expect(page.getByTestId("job-id")).toHaveText(job.id);
+  await expect(page.locator("#detail-status")).toHaveText("Succeeded");
+  await expect(page.locator("#error")).toBeEmpty();
+  expect(reads).toBe(2);
+});
+
 test("a missing selected job clears the inspector and keeps the list updating", async ({
   page,
   request,

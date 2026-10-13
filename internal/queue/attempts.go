@@ -18,6 +18,11 @@ func (s *Store) Claim(ctx context.Context, worker string, queues []string, lease
 		return Job{}, err
 	}
 	defer tx.Rollback(ctx)
+	// Wait for event publication before starting the lease clock. The trigger
+	// takes this same transaction lock when the claim changes the job's status.
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(7241074)`); err != nil {
+		return Job{}, err
+	}
 	j, err := scanJob(tx.QueryRow(ctx, `UPDATE jobs SET status='running',attempt=attempt+1,worker_id=$1,
 	 lease_until=clock_timestamp()+make_interval(secs=>$3),updated_at=clock_timestamp(),error=''
 	 WHERE id=(SELECT id FROM jobs WHERE status='queued' AND queue=ANY($2) AND available_at<=clock_timestamp()

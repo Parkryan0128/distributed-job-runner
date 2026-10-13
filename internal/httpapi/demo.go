@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sync"
@@ -21,6 +22,7 @@ type Demo struct {
 	running          bool
 	next             time.Time
 	sent             int
+	generationCancel context.CancelFunc
 	Duration         time.Duration
 	SecureCookies    bool
 	HistoryRetention time.Duration
@@ -41,8 +43,15 @@ func NewDemo(store *queue.Store) *Demo {
 }
 func (d *Demo) expire() {
 	if d.owner != "" && !time.Now().Before(d.expires) {
-		d.owner = ""
-		d.running = false
+		d.release()
+	}
+}
+func (d *Demo) release() {
+	d.owner = ""
+	d.running = false
+	if d.generationCancel != nil {
+		d.generationCancel()
+		d.generationCancel = nil
 	}
 }
 func (d *Demo) view(session string) demoView {
@@ -104,12 +113,12 @@ func (d *Demo) control(w http.ResponseWriter, r *http.Request) {
 			d.next = time.Now()
 		}
 	}
-	if in.Level != "" {
+	if in.Level != "" && in.Level != d.level {
 		d.level = in.Level
+		d.next = time.Now()
 	}
 	if in.Action == "stop" {
-		d.owner = ""
-		d.running = false
+		d.release()
 	}
 	d.broadcastLocked(message{kind: "demo"})
 	d.mu.Unlock()

@@ -14,6 +14,8 @@ const state = {
   next: 0,
   controller: null,
   refreshPending: false,
+  retryTimer: null,
+  retryDelay: 1000,
   rows: "",
   pending: null,
   submitting: false,
@@ -169,6 +171,8 @@ async function refresh({ background = false } = {}) {
     return;
   }
   state.refreshPending = false;
+  clearTimeout(state.retryTimer);
+  state.retryTimer = null;
   state.controller?.abort();
   const controller = new AbortController();
   state.controller = controller;
@@ -200,7 +204,15 @@ async function refresh({ background = false } = {}) {
   const failed = results.find((result) => result.status === "rejected");
   $("#error").textContent = failed ? `${failed.reason.message}.` : "";
   state.controller = null;
+  if (!failed) state.retryDelay = 1000;
   if (state.refreshPending) tableRefresh();
+  else if (failed) {
+    state.retryTimer = setTimeout(() => {
+      state.retryTimer = null;
+      refresh({ background: true });
+    }, state.retryDelay);
+    state.retryDelay = Math.min(state.retryDelay * 2, 10000);
+  }
 }
 
 function clearDetail(
