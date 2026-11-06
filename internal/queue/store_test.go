@@ -421,15 +421,7 @@ func TestLeaseExpiryWhileWaitingForRowLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			locked, err := p.Begin(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer locked.Rollback(ctx)
-			var pid int
-			if err := locked.QueryRow(ctx, `SELECT pg_backend_pid() FROM jobs WHERE id=$1 FOR UPDATE`, j.ID).Scan(&pid); err != nil {
-				t.Fatal(err)
-			}
+			locked, pid := holdLock(t, p, `SELECT id FROM jobs WHERE id=$1 FOR UPDATE`, j.ID)
 			waiting, cancel := context.WithTimeout(ctx, 5*time.Second)
 			defer cancel()
 			result := make(chan error, 1)
@@ -440,20 +432,7 @@ func TestLeaseExpiryWhileWaitingForRowLock(t *testing.T) {
 					result <- s.Finish(waiting, j, json.RawMessage(`{}`), "", false)
 				}
 			}()
-			blocked := false
-			deadline := time.Now().Add(time.Second)
-			for time.Now().Before(deadline) {
-				if err := p.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked); err != nil {
-					t.Fatal(err)
-				}
-				if blocked {
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
-			}
-			if !blocked {
-				t.Fatal("operation did not wait on the row lock")
-			}
+			waitForBlockedQuery(t, p, pid)
 			execute(t, p, `SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM lease_until-clock_timestamp()))+0.05) FROM jobs WHERE id=$1`, j.ID)
 			if err := locked.Rollback(ctx); err != nil {
 				t.Fatal(err)

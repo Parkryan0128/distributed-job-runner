@@ -12,18 +12,7 @@ import (
 func TestClaimLeaseStartsAfterWaitingForEventPublication(t *testing.T) {
 	s, p := testdb.New(t)
 	submit(t, s, queue.Submit{MaxAttempts: 1})
-	tx, err := p.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(7241074)`); err != nil {
-		t.Fatal(err)
-	}
-	var pid int
-	if err := tx.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
-		t.Fatal(err)
-	}
+	tx, pid := holdLock(t, p, `SELECT pg_advisory_xact_lock(7241074)`)
 	type outcome struct {
 		job queue.Job
 		err error
@@ -34,20 +23,7 @@ func TestClaimLeaseStartsAfterWaitingForEventPublication(t *testing.T) {
 		j, err := s.Claim(ctx, "worker", []string{"default"}, lease)
 		result <- outcome{j, err}
 	}()
-	deadline := time.Now().Add(time.Second)
-	for {
-		var blocked bool
-		if err := p.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, pid).Scan(&blocked); err != nil {
-			t.Fatal(err)
-		}
-		if blocked {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("claim did not wait for event publication")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	waitForBlockedQuery(t, p, pid)
 	time.Sleep(lease + 50*time.Millisecond)
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
