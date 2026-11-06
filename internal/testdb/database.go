@@ -31,6 +31,7 @@ func New(t *testing.T) (*queue.Store, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = name
+	cfg.ConnConfig.RuntimeParams["application_name"] = name
 	cfg.MaxConns = 20
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
