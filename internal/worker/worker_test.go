@@ -17,13 +17,13 @@ import (
 	"github.com/Parkryan0128/distributed-job-runner/internal/worker"
 )
 
-func start(t *testing.T, s *queue.Store, id string, h worker.Handler) (context.CancelFunc, <-chan error) {
+func start(t *testing.T, s *queue.Store, id string, h worker.Handler) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	w := worker.Worker{Store: s, ID: id, Queues: []string{"default"}, Concurrency: 2, Lease: 600 * time.Millisecond, Poll: 20 * time.Millisecond, Handler: h, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	go func() { done <- w.Run(ctx) }()
-	t.Cleanup(func() {
+	stop := sync.OnceFunc(func() {
 		cancel()
 		select {
 		case err := <-done:
@@ -34,7 +34,8 @@ func start(t *testing.T, s *queue.Store, id string, h worker.Handler) (context.C
 			t.Error("worker did not stop")
 		}
 	})
-	return cancel, done
+	t.Cleanup(stop)
+	return stop
 }
 
 func submit(t *testing.T, s *queue.Store, kind, payload string, attempts, timeout int) queue.Job {
@@ -175,9 +176,9 @@ func TestRunningCancellationStopsHandler(t *testing.T) {
 func TestShutdownReturnsInFlightWorkForRetry(t *testing.T) {
 	s, _ := testdb.New(t)
 	j := submit(t, s, "demo", `{"work_ms":10000}`, 3, 30)
-	cancel, _ := start(t, s, "worker", nil)
+	stop := start(t, s, "worker", nil)
 	await(t, s, j.ID, "running")
-	cancel()
+	stop()
 	got := await(t, s, j.ID, "queued")
 	if got.Attempts[0].Status != "failed" || !strings.Contains(got.Error, "canceled") {
 		t.Fatalf("shutdown: %+v", got)
