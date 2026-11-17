@@ -13,28 +13,10 @@ import (
 
 func (w *Worker) execute(parent context.Context, j queue.Job) {
 	ctx, cancel := context.WithTimeout(parent, time.Duration(j.TimeoutSeconds)*time.Second)
-	done := make(chan struct{})
+	heartbeatDone := make(chan struct{})
 	go func() {
-		defer close(done)
-		ticker := time.NewTicker(w.Lease / 3)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				op, stop := context.WithTimeout(ctx, w.Lease/3)
-				err := w.Store.Heartbeat(op, j, w.Lease)
-				stop()
-				if err != nil {
-					if ctx.Err() == nil {
-						w.Logger.Warn("lost job lease", "job_id", j.ID, "error", err)
-					}
-					cancel()
-					return
-				}
-			}
-		}
+		defer close(heartbeatDone)
+		w.renewLease(ctx, j, cancel)
 	}()
 	w.Logger.Info("started job", "job_id", j.ID, "attempt", j.Attempt, "worker_id", w.ID)
 	result, err := invoke(ctx, w.Handler, j)
@@ -42,7 +24,7 @@ func (w *Worker) execute(parent context.Context, j queue.Job) {
 		err = ctx.Err()
 	}
 	cancel()
-	<-done
+	<-heartbeatDone
 	failure := ""
 	permanent := false
 	if err != nil {
@@ -59,6 +41,28 @@ func (w *Worker) execute(parent context.Context, j queue.Job) {
 		return
 	}
 	w.Logger.Info("finished attempt", "job_id", j.ID, "attempt", j.Attempt, "error", failure)
+}
+
+func (w *Worker) renewLease(ctx context.Context, j queue.Job, cancel context.CancelFunc) {
+	ticker := time.NewTicker(w.Lease / 3)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			op, stop := context.WithTimeout(ctx, w.Lease/3)
+			err := w.Store.Heartbeat(op, j, w.Lease)
+			stop()
+			if err != nil {
+				if ctx.Err() == nil {
+					w.Logger.Warn("lost job lease", "job_id", j.ID, "error", err)
+				}
+				cancel()
+				return
+			}
+		}
+	}
 }
 
 func invoke(ctx context.Context, handler Handler, j queue.Job) (result json.RawMessage, err error) {
